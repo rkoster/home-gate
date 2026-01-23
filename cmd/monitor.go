@@ -50,9 +50,7 @@ func init() {
 	_ = viper.BindEnv("username", "FRITZBOX_USERNAME")
 	_ = viper.BindEnv("password", "FRITZBOX_PASSWORD")
 
-	// Mark required flags
-	_ = monitorCmd.MarkFlagRequired("username")
-	_ = monitorCmd.MarkFlagRequired("password")
+	// Flags are required via validation in runMonitor
 }
 
 func runMonitor() {
@@ -65,7 +63,7 @@ func runMonitor() {
 	enforce := viper.GetBool("enforce")
 
 	if username == "" || password == "" {
-		log.Fatal("username and password are required")
+		log.Fatal("username and password are required (set via --username/--password flags or FRITZBOX_USERNAME/FRITZBOX_PASSWORD env vars)")
 	}
 
 	client := fritzbox.New(username, password)
