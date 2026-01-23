@@ -12,9 +12,21 @@ A Go CLI tool to monitor device usage on Fritz!Box routers and enforce parental 
 
 ## Installation
 
+### From Source
+
 ```bash
 go build .
 ```
+
+### Using Docker
+
+Pull the latest image from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/your-username/home-gate:latest
+```
+
+Replace `your-username` with your GitHub username.
 
 ## Usage
 
@@ -55,6 +67,26 @@ Monitor hourly usage:
 Enforce policy (weekdays 90 min, weekends 180 min):
 ```bash
 ./home-gate monitor --username admin --password secret --policy "MO-FR90SA-SU180" --enforce
+```
+
+### Using Docker
+
+Run with environment variables:
+
+```bash
+docker run --rm \
+  -e FRITZBOX_USERNAME=admin \
+  -e FRITZBOX_PASSWORD=secret \
+  ghcr.io/your-username/home-gate:latest \
+  monitor --policy "MO-FR90SA-SU180" --enforce
+```
+
+Or with flags:
+
+```bash
+docker run --rm \
+  ghcr.io/your-username/home-gate:latest \
+  monitor --username admin --password secret --policy "MO-FR90SA-SU180" --enforce
 ```
 
 ## Policy Format
