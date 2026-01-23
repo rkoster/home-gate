@@ -38,6 +38,7 @@ This will monitor all configured devices and display their daily activity.
 - `--period`: "hour" for usage data, "day" for activity monitoring (default: "day")
 - `--activity-threshold`: Minimum Byte/s to consider active (default: 0)
 - `--policy`: Policy string for allowed minutes per day, e.g., "MO-TH90FR120SA-SU180" (optional)
+- `--enforce`: Enforce policy by blocking devices that exceed limits and unblocking compliant ones (optional)
 
 ### Examples
 
@@ -53,35 +54,7 @@ Monitor hourly usage:
 
 Enforce policy (weekdays 90 min, weekends 180 min):
 ```bash
-./home-gate monitor --username admin --password secret --policy "MO-FR90SA-SU180"
-```
-
-This will monitor all configured devices and display their daily activity.
-
-### Options
-
-- `-username`: Fritz!Box username (required)
-- `-password`: Fritz!Box password (required)
-- `-mac`: Specific MAC address to monitor (optional, monitors configured devices if not specified)
-- `-period`: "hour" for usage data, "day" for activity monitoring (default: "day")
-- `-activity-threshold`: Minimum Byte/s to consider active (default: 0)
-- `-policy`: Policy string for daily limits, e.g., "MO-TH90FR120SA-SU180" (optional)
-
-### Examples
-
-Monitor specific device for daily activity:
-```bash
-./home-gate -username admin -password secret -mac 00:11:22:33:44:55
-```
-
-Monitor hourly usage:
-```bash
-./home-gate -username admin -password secret -period hour
-```
-
-Enforce policy (weekdays 90 min, weekends 180 min):
-```bash
-./home-gate -username admin -password secret -policy "MO-FR90SA-SU180"
+./home-gate monitor --username admin --password secret --policy "MO-FR90SA-SU180" --enforce
 ```
 
 ## Policy Format
@@ -96,10 +69,8 @@ Policies define allowed minutes per day ranges:
 To run every 15 minutes and enforce limits:
 
 ```bash
-*/15 * * * * /path/to/home-gate -username admin -password secret -policy "MO-FR90SA-SU180" -enforce
+*/15 * * * * /path/to/home-gate monitor --username admin --password secret --policy "MO-FR90SA-SU180" --enforce
 ```
-
-Note: The `-enforce` flag is planned for future implementation.
 
 ## Output
 
