@@ -8,7 +8,24 @@ import (
 	"time"
 )
 
-func Parse(policyStr string) (map[string]int, error) {
+type PolicyManager struct {
+	policy map[string]int
+}
+
+func NewPolicyManager(policyStr string) (*PolicyManager, error) {
+	policy, err := parse(policyStr)
+	if err != nil {
+		return nil, err
+	}
+	return &PolicyManager{policy: policy}, nil
+}
+
+func (pm *PolicyManager) IsWithinPolicy(activeMinutes int) bool {
+	allowed := pm.getTodayAllowed()
+	return activeMinutes <= allowed
+}
+
+func parse(policyStr string) (map[string]int, error) {
 	policy := make(map[string]int)
 	re := regexp.MustCompile(`([A-Z-]+)(\d+)`)
 	matches := re.FindAllStringSubmatch(policyStr, -1)
@@ -27,7 +44,7 @@ func Parse(policyStr string) (map[string]int, error) {
 	return policy, nil
 }
 
-func GetTodayAllowed(policyMap map[string]int) int {
+func (pm *PolicyManager) getTodayAllowed() int {
 	now := time.Now()
 	weekday := now.Weekday()
 	var dayKey string
@@ -49,7 +66,7 @@ func GetTodayAllowed(policyMap map[string]int) int {
 	}
 
 	// Check ranges
-	for key, min := range policyMap {
+	for key, min := range pm.policy {
 		if strings.Contains(key, "-") {
 			parts := strings.Split(key, "-")
 			if len(parts) == 2 {

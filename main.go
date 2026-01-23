@@ -68,7 +68,7 @@ func processDeviceHour(name string, rcvMeasurements, sndMeasurements []float64, 
 	fmt.Printf("Upstream: %d bytes\n", totalSnd)
 }
 
-func processDeviceDay(name string, rcvMeasurements, sndMeasurements []float64, activityThreshold float64, parsedPolicy map[string]int) {
+func processDeviceDay(name string, rcvMeasurements, sndMeasurements []float64, activityThreshold float64, pm *policy.PolicyManager) {
 	dailyActiveCount := 0
 	for i := 0; i < len(rcvMeasurements); i++ {
 		rcv := rcvMeasurements[i]
@@ -105,19 +105,16 @@ func processDeviceDay(name string, rcvMeasurements, sndMeasurements []float64, a
 	fmt.Printf("%s activity in last 12 hours:\n", name)
 	fmt.Printf("Active: %d minutes (%d/%d intervals)\n", activeMinutes, activeCount, numIntervals)
 	fmt.Printf("Daily total: %d minutes (%d/96 intervals)\n", dailyActiveMinutes, dailyActiveCount)
-	if parsedPolicy != nil {
-		todayAllowed := policy.GetTodayAllowed(parsedPolicy)
-		if todayAllowed > 0 {
-			if dailyActiveMinutes > todayAllowed {
-				fmt.Printf("Exceeded daily limit: %d/%d minutes\n", dailyActiveMinutes, todayAllowed)
-			} else {
-				fmt.Printf("Within daily limit: %d/%d minutes\n", dailyActiveMinutes, todayAllowed)
+			if pm != nil {
+				if pm.IsWithinPolicy(dailyActiveMinutes) {
+					fmt.Printf("Within daily policy\n")
+				} else {
+					fmt.Printf("Exceeded daily policy\n")
+				}
 			}
-		}
-	}
 }
 
-func processDevices(client fritzbox.Client, targetMACs, targetNames []string, parsedPolicy map[string]int, period string, activityThreshold float64, landevices []fritzbox.Landevice, macToUserUID map[string]string) {
+func processDevices(client fritzbox.Client, targetMACs, targetNames []string, pm *policy.PolicyManager, period string, activityThreshold float64, landevices []fritzbox.Landevice, macToUserUID map[string]string) {
 	datasets, err := client.GetMonitorDatasets()
 	if err != nil {
 		log.Fatalf("Failed to fetch datasets: %v", err)
@@ -173,7 +170,7 @@ func processDevices(client fritzbox.Client, targetMACs, targetNames []string, pa
 		if period == "hour" {
 			processDeviceHour(name, rcvMeasurements, sndMeasurements, intervalSeconds)
 		} else {
-			processDeviceDay(name, rcvMeasurements, sndMeasurements, activityThreshold, parsedPolicy)
+			processDeviceDay(name, rcvMeasurements, sndMeasurements, activityThreshold, pm)
 		}
 		fmt.Println()
 	}
@@ -715,8 +712,10 @@ func main() {
 	}
 	defer client.Close()
 
+	var pm *policy.PolicyManager
 	if *policy != "" {
-		policyMap, err = policy.Parse(*policy)
+		var err error
+		pm, err = policy.NewPolicyManager(*policy)
 		if err != nil {
 			log.Fatalf("Failed to parse policy: %v", err)
 		}
