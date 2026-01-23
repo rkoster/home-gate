@@ -23,10 +23,8 @@ go build .
 Pull the latest image from GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/your-username/home-gate:latest
+docker pull ghcr.io/rkoster/home-gate:latest
 ```
-
-Replace `your-username` with your GitHub username.
 
 ## Usage
 
@@ -77,7 +75,7 @@ Run with environment variables:
 docker run --rm \
   -e FRITZBOX_USERNAME=admin \
   -e FRITZBOX_PASSWORD=secret \
-  ghcr.io/your-username/home-gate:latest \
+  ghcr.io/rkoster/home-gate:latest \
   monitor --policy "MO-FR90SA-SU180" --enforce
 ```
 
@@ -85,7 +83,7 @@ Or with flags:
 
 ```bash
 docker run --rm \
-  ghcr.io/your-username/home-gate:latest \
+  ghcr.io/rkoster/home-gate:latest \
   monitor --username admin --password secret --policy "MO-FR90SA-SU180" --enforce
 ```
 
