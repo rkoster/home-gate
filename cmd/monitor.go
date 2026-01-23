@@ -38,21 +38,21 @@ func init() {
 	monitorCmd.Flags().Bool("enforce", false, "Enforce policy by blocking devices that exceed limits")
 
 	// Bind flags to viper
-	viper.BindPFlag("username", monitorCmd.Flags().Lookup("username"))
-	viper.BindPFlag("password", monitorCmd.Flags().Lookup("password"))
-	viper.BindPFlag("mac", monitorCmd.Flags().Lookup("mac"))
-	viper.BindPFlag("period", monitorCmd.Flags().Lookup("period"))
-	viper.BindPFlag("activity-threshold", monitorCmd.Flags().Lookup("activity-threshold"))
-	viper.BindPFlag("policy", monitorCmd.Flags().Lookup("policy"))
-	viper.BindPFlag("enforce", monitorCmd.Flags().Lookup("enforce"))
+	_ = viper.BindPFlag("username", monitorCmd.Flags().Lookup("username"))
+	_ = viper.BindPFlag("password", monitorCmd.Flags().Lookup("password"))
+	_ = viper.BindPFlag("mac", monitorCmd.Flags().Lookup("mac"))
+	_ = viper.BindPFlag("period", monitorCmd.Flags().Lookup("period"))
+	_ = viper.BindPFlag("activity-threshold", monitorCmd.Flags().Lookup("activity-threshold"))
+	_ = viper.BindPFlag("policy", monitorCmd.Flags().Lookup("policy"))
+	_ = viper.BindPFlag("enforce", monitorCmd.Flags().Lookup("enforce"))
 
 	// Bind environment variables
-	viper.BindEnv("username", "FRITZBOX_USERNAME")
-	viper.BindEnv("password", "FRITZBOX_PASSWORD")
+	_ = viper.BindEnv("username", "FRITZBOX_USERNAME")
+	_ = viper.BindEnv("password", "FRITZBOX_PASSWORD")
 
 	// Mark required flags
-	monitorCmd.MarkFlagRequired("username")
-	monitorCmd.MarkFlagRequired("password")
+	_ = monitorCmd.MarkFlagRequired("username")
+	_ = monitorCmd.MarkFlagRequired("password")
 }
 
 func runMonitor() {
