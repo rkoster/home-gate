@@ -8,16 +8,31 @@ import (
 	"time"
 )
 
+type Clock interface {
+	Now() time.Time
+}
+
+type RealClock struct{}
+
+func (rc RealClock) Now() time.Time {
+	return time.Now()
+}
+
 type PolicyManager struct {
 	policy map[string]int
+	clock  Clock
 }
 
 func NewPolicyManager(policyStr string) (*PolicyManager, error) {
+	return NewPolicyManagerWithClock(policyStr, RealClock{})
+}
+
+func NewPolicyManagerWithClock(policyStr string, clock Clock) (*PolicyManager, error) {
 	policy, err := parse(policyStr)
 	if err != nil {
 		return nil, err
 	}
-	return &PolicyManager{policy: policy}, nil
+	return &PolicyManager{policy: policy, clock: clock}, nil
 }
 
 func (pm *PolicyManager) IsWithinPolicy(activeMinutes int) bool {
@@ -45,7 +60,7 @@ func parse(policyStr string) (map[string]int, error) {
 }
 
 func (pm *PolicyManager) getTodayAllowed() int {
-	now := time.Now()
+	now := pm.clock.Now()
 	weekday := now.Weekday()
 	var dayKey string
 	switch weekday {
