@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -39,6 +42,10 @@ type SubsetData struct {
 	Measurements   []float64 `json:"measurements"`
 }
 
+type LandeviceResponse struct {
+	Landevice []Landevice `json:"landevice"`
+}
+
 type DataPoint struct {
 	Time   int64         `json:"time"`
 	Values []interface{} `json:"values"`
@@ -49,6 +56,7 @@ type Landevice struct {
 	FriendlyName string `json:"friendly_name"`
 	MAC          string `json:"mac"`
 	Active       string `json:"active"`
+	UserUIDs     string `json:"user_UIDs"`
 }
 
 type MonitorConfig struct {
@@ -131,6 +139,44 @@ func dayInRange(day, start, end string) bool {
 	return dayIdx >= startIdx && dayIdx <= endIdx
 }
 
+func blockUnblock(client *fritzbox.Client, sid, userUID string, block bool) error {
+	data := url.Values{}
+	data.Set("xhr", "1")
+	data.Set("sid", sid)
+	data.Set("edit-profiles", "")
+	data.Set("blocked", fmt.Sprintf("%t", block))
+	data.Set("toBeBlocked", userUID)
+	data.Set("lang", "en")
+	data.Set("page", "kidLis")
+
+	req, err := http.NewRequest("POST", client.BaseUrl+"/data.lua", strings.NewReader(data.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "en-GB,en;q=0.6")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Origin", strings.TrimSuffix(client.BaseUrl, "/"))
+	req.Header.Set("Referer", client.BaseUrl+"/")
+	req.Header.Set("Sec-GPC", "1")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	httpClient := &http.Client{Transport: tr}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func main() {
 	username := flag.String("username", "", "Fritzbox username")
 	password := flag.String("password", "", "Fritzbox password")
@@ -138,6 +184,9 @@ func main() {
 	period := flag.String("period", "day", "Period to query: hour or day")
 	activityThreshold := flag.Float64("activity-threshold", 0, "Minimum Byte/s to consider interval active (default 0)")
 	policy := flag.String("policy", "", "Policy string for allowed minutes per day range (e.g., MO-TH90FR120SA-SU180)")
+	action := flag.String("action", "", "Action to perform: block or unblock")
+	target := flag.String("target", "", "MAC address to block/unblock")
+	enforce := flag.Bool("enforce", false, "Enforce policy by blocking devices that exceed limits")
 	flag.Parse()
 
 	if *username == "" || *password == "" {
@@ -160,56 +209,6 @@ func main() {
 		log.Fatalf("Failed to connect: %v", err)
 	}
 	defer client.Close()
-
-	var targetMACs []string
-	var targetNames []string
-
-	if *mac != "" {
-		// Normalize MAC: remove colons and lowercase
-		normalizedMac := strings.ToLower(strings.ReplaceAll(*mac, ":", ""))
-		targetMACs = []string{normalizedMac}
-		targetNames = []string{*mac} // Use original for display
-	} else {
-		// Fetch configured devices
-		configJSON, _, err := client.RestGet("/api/v0/monitor/configuration")
-		if err != nil {
-			log.Fatalf("Failed to fetch monitor config: %v", err)
-		}
-
-		var config MonitorConfig
-		if err := json.Unmarshal(configJSON, &config); err != nil {
-			log.Fatalf("Failed to parse monitor config: %v", err)
-		}
-
-		uids := strings.Split(config.DisplayHomenetDevices, ",")
-
-		// Fetch landevices
-		landevicesJSON, _, err := client.RestGet("/api/v0/landevice")
-		if err != nil {
-			log.Fatalf("Failed to fetch landevices: %v", err)
-		}
-
-		var landevices struct {
-			Landevice []Landevice `json:"landevice"`
-		}
-		if err := json.Unmarshal(landevicesJSON, &landevices); err != nil {
-			log.Fatalf("Failed to parse landevices: %v", err)
-		}
-
-		// Map UID to device
-		uidToDevice := make(map[string]Landevice)
-		for _, dev := range landevices.Landevice {
-			uidToDevice[dev.UID] = dev
-		}
-
-		for _, uid := range uids {
-			if dev, ok := uidToDevice[uid]; ok {
-				normalizedMac := strings.ToLower(strings.ReplaceAll(dev.MAC, ":", ""))
-				targetMACs = append(targetMACs, normalizedMac)
-				targetNames = append(targetNames, dev.FriendlyName)
-			}
-		}
-	}
 
 	// Fetch datasets
 	datasetsJSON, _, err := client.RestGet("/api/v0/monitor/datasets")
@@ -341,6 +340,20 @@ func main() {
 				}
 			}
 			fmt.Printf("Timeline (each char = 15 min): %s\n", viz.String())
+
+			// Enforce policy
+			if *enforce && policyMap != nil && activeMinutes > getTodayAllowed(policyMap) {
+				userUID := macToUserUID[normalizedMac]
+				if userUID != "" {
+					err := blockUnblock(client, client.SID(), userUID, true)
+					if err != nil {
+						log.Printf("Failed to block %s: %v", name, err)
+					} else {
+						fmt.Printf("Blocked %s for exceeding limit\n", name)
+					}
+				}
+			}
+
 			fmt.Println()
 		}
 	}
