@@ -12,6 +12,13 @@ import (
 )
 
 //go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -o fritzboxfakes/fake_client.go . Client
+//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -o fritzboxfakes/fake_fritzbox_lib_client.go . FritzboxLibClient
+
+type FritzboxLibClient interface {
+	Connect() error
+	RestGet(path string) ([]byte, int, error)
+	SID() string
+}
 
 type Client interface {
 	Connect() error
@@ -25,25 +32,26 @@ type Client interface {
 }
 
 type fritzboxClient struct {
-	client *fritzboxlib.Client
+	fritzboxLibClient FritzboxLibClient
+	baseUrl           string
 }
 
 func New(username, password string) Client {
 	c := fritzboxlib.New(username, password)
 	c.BaseUrl = "http://192.168.2.1"
-	return &fritzboxClient{client: c}
+	return &fritzboxClient{fritzboxLibClient: c, baseUrl: "http://192.168.2.1"}
 }
 
 func (c *fritzboxClient) Connect() error {
-	return c.client.Connect()
+	return c.fritzboxLibClient.Connect()
 }
 
 func (c *fritzboxClient) RestGet(path string) ([]byte, int, error) {
-	return c.client.RestGet(path)
+	return c.fritzboxLibClient.RestGet(path)
 }
 
 func (c *fritzboxClient) SID() string {
-	return c.client.SID()
+	return c.fritzboxLibClient.SID()
 }
 
 func (c *fritzboxClient) GetLandevices() ([]Landevice, error) {
@@ -101,14 +109,14 @@ func (c *fritzboxClient) GetMonitorData(dataset, subset string) ([]SubsetData, e
 func (c *fritzboxClient) BlockDevice(userUID string, block bool) error {
 	data := url.Values{}
 	data.Set("xhr", "1")
-	data.Set("sid", c.client.SID())
+	data.Set("sid", c.fritzboxLibClient.SID())
 	data.Set("edit-profiles", "")
 	data.Set("blocked", fmt.Sprintf("%t", block))
 	data.Set("toBeBlocked", userUID)
 	data.Set("lang", "en")
 	data.Set("page", "kidLis")
 
-	req, err := http.NewRequest("POST", c.client.BaseUrl+"/data.lua", strings.NewReader(data.Encode()))
+	req, err := http.NewRequest("POST", c.baseUrl+"/data.lua", strings.NewReader(data.Encode()))
 	if err != nil {
 		return err
 	}
@@ -116,8 +124,8 @@ func (c *fritzboxClient) BlockDevice(userUID string, block bool) error {
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Language", "en-GB,en;q=0.6")
 	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Origin", strings.TrimSuffix(c.client.BaseUrl, "/"))
-	req.Header.Set("Referer", c.client.BaseUrl+"/")
+	req.Header.Set("Origin", strings.TrimSuffix(c.baseUrl, "/"))
+	req.Header.Set("Referer", c.baseUrl+"/")
 	req.Header.Set("Sec-GPC", "1")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
 
