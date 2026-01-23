@@ -292,7 +292,21 @@ func main() {
 			fmt.Printf("Upstream: %d bytes\n", totalSnd)
 			fmt.Println()
 		} else { // day
-			// Use last 48 intervals for 12 hours (15 min * 48 = 720 min)
+			// Sum active minutes over full day (96 intervals)
+			dailyActiveCount := 0
+			for i := 0; i < len(rcvMeasurements); i++ {
+				rcv := rcvMeasurements[i]
+				snd := 0.0
+				if i < len(sndMeasurements) {
+					snd = sndMeasurements[i]
+				}
+				if rcv > *activityThreshold || snd > *activityThreshold {
+					dailyActiveCount++
+				}
+			}
+			dailyActiveMinutes := dailyActiveCount * 15
+
+			// Use last 48 intervals for 12-hour timeline
 			numIntervals := 48
 			start := len(rcvMeasurements) - numIntervals
 			if start < 0 {
@@ -300,7 +314,7 @@ func main() {
 				numIntervals = len(rcvMeasurements)
 			}
 
-			// Count active intervals in last 12 hours
+			// Count active in last 12 hours for timeline
 			activeCount := 0
 			var activity []bool
 			for i := start; i < len(rcvMeasurements); i++ {
@@ -317,10 +331,24 @@ func main() {
 			}
 			activeMinutes := activeCount * 15
 
+			// Add | for start of day in timeline
+			now := time.Now()
+			minutesPastMidnight := now.Hour()*60 + now.Minute()
+			intervalsPastMidnight := minutesPastMidnight / 15
+			dayStartPos := numIntervals - intervalsPastMidnight
+			if dayStartPos >= 0 && dayStartPos < numIntervals {
+				// Insert | at position
+				if dayStartPos < len(activity) {
+					activity[dayStartPos] = true // Mark as special, but for now, just note
+				}
+			}
+
 			// ASCII visualization
 			var viz strings.Builder
-			for _, active := range activity {
-				if active {
+			for i, active := range activity {
+				if dayStartPos >= 0 && i == dayStartPos {
+					viz.WriteString("|")
+				} else if active {
 					viz.WriteString("\033[31m*\033[0m") // Red for active
 				} else {
 					viz.WriteString("\033[2m.\033[0m") // Dim for inactive
@@ -329,27 +357,49 @@ func main() {
 
 			fmt.Printf("%s (%s) activity in last 12 hours:\n", name, strings.ToUpper(normalizedMac))
 			fmt.Printf("Active: %d minutes (%d/%d intervals, threshold %.1f Byte/s)\n", activeMinutes, activeCount, numIntervals, *activityThreshold)
+			fmt.Printf("Daily total: %d minutes (%d/96 intervals)\n", dailyActiveMinutes, dailyActiveCount)
 			if policyMap != nil {
 				todayAllowed := getTodayAllowed(policyMap)
 				if todayAllowed > 0 {
-					if activeMinutes > todayAllowed {
-						fmt.Printf("⚠️  Exceeded daily limit: %d/%d minutes\n", activeMinutes, todayAllowed)
+					if dailyActiveMinutes > todayAllowed {
+						fmt.Printf("⚠️  Exceeded daily limit: %d/%d minutes\n", dailyActiveMinutes, todayAllowed)
 					} else {
-						fmt.Printf("✅ Within daily limit: %d/%d minutes\n", activeMinutes, todayAllowed)
+						fmt.Printf("✅ Within daily limit: %d/%d minutes\n", dailyActiveMinutes, todayAllowed)
 					}
 				}
 			}
-			fmt.Printf("Timeline (each char = 15 min): %s\n", viz.String())
+			fmt.Printf("Timeline (each char = 15 min, | = day start): %s\n", viz.String())
 
-			// Enforce policy
-			if *enforce && policyMap != nil && activeMinutes > getTodayAllowed(policyMap) {
-				userUID := macToUserUID[normalizedMac]
-				if userUID != "" {
-					err := blockUnblock(client, client.SID(), userUID, true)
-					if err != nil {
-						log.Printf("Failed to block %s: %v", name, err)
-					} else {
-						fmt.Printf("Blocked %s for exceeding limit\n", name)
+			// Enforce policy based on daily total
+			if *enforce && policyMap != nil {
+				todayAllowed := getTodayAllowed(policyMap)
+				if todayAllowed > 0 {
+					userUID := macToUserUID[normalizedMac]
+					if userUID != "" {
+						shouldBlock := dailyActiveMinutes > todayAllowed
+						// Check current blocked status
+						isBlocked := false
+						for _, dev := range landevices.Landevice {
+							if strings.ToLower(strings.ReplaceAll(dev.MAC, ":", "")) == normalizedMac {
+								isBlocked = dev.Blocked == "1"
+								break
+							}
+						}
+						if shouldBlock && !isBlocked {
+							err := blockUnblock(client, client.SID(), userUID, true)
+							if err != nil {
+								log.Printf("Failed to block %s: %v", name, err)
+							} else {
+								fmt.Printf("Blocked %s for exceeding limit\n", name)
+							}
+						} else if !shouldBlock && isBlocked {
+							err := blockUnblock(client, client.SID(), userUID, false)
+							if err != nil {
+								log.Printf("Failed to unblock %s: %v", name, err)
+							} else {
+								fmt.Printf("Unblocked %s\n", name)
+							}
+						}
 					}
 				}
 			}
