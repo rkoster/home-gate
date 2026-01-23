@@ -32,8 +32,8 @@ This will monitor all configured devices and display their daily activity.
 
 ### Options
 
-- `--username`: Fritz!Box username (required)
-- `--password`: Fritz!Box password (required)
+- `--username`: Fritz!Box username (required, can be set via FRITZBOX_USERNAME env var)
+- `--password`: Fritz!Box password (required, can be set via FRITZBOX_PASSWORD env var)
 - `--mac`: Specific MAC address to monitor (optional, monitors configured devices if not specified)
 - `--period`: "hour" for usage data, "day" for activity monitoring (default: "day")
 - `--activity-threshold`: Minimum Byte/s to consider active (default: 0)

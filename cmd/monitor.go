@@ -46,6 +46,10 @@ func init() {
 	viper.BindPFlag("policy", monitorCmd.Flags().Lookup("policy"))
 	viper.BindPFlag("enforce", monitorCmd.Flags().Lookup("enforce"))
 
+	// Bind environment variables
+	viper.BindEnv("username", "FRITZBOX_USERNAME")
+	viper.BindEnv("password", "FRITZBOX_PASSWORD")
+
 	// Mark required flags
 	monitorCmd.MarkFlagRequired("username")
 	monitorCmd.MarkFlagRequired("password")
