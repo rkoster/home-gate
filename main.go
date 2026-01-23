@@ -204,22 +204,44 @@ func main() {
 			fmt.Printf("Upstream: %d bytes\n", totalSnd)
 			fmt.Println()
 		} else { // day
-			// Count active intervals: where either rcv or snd > threshold
+			// Use last 48 intervals for 12 hours (15 min * 48 = 720 min)
+			numIntervals := 48
+			start := len(rcvMeasurements) - numIntervals
+			if start < 0 {
+				start = 0
+				numIntervals = len(rcvMeasurements)
+			}
+
+			// Count active intervals in last 12 hours
 			activeCount := 0
-			for i := range rcvMeasurements {
+			var activity []bool
+			for i := start; i < len(rcvMeasurements); i++ {
 				rcv := rcvMeasurements[i]
 				snd := 0.0
 				if i < len(sndMeasurements) {
 					snd = sndMeasurements[i]
 				}
-				if rcv > *activityThreshold || snd > *activityThreshold {
+				isActive := rcv > *activityThreshold || snd > *activityThreshold
+				activity = append(activity, isActive)
+				if isActive {
 					activeCount++
 				}
 			}
-			activeMinutes := activeCount * 15 // 15 min intervals
+			activeMinutes := activeCount * 15
 
-			fmt.Printf("%s (%s) activity in last day:\n", name, strings.ToUpper(normalizedMac))
-			fmt.Printf("Active for %d minutes (%d out of %d intervals, threshold %.1f Byte/s)\n", activeMinutes, activeCount, len(rcvMeasurements), *activityThreshold)
+			// ASCII visualization (heatmap-like with colors)
+			var viz strings.Builder
+			for _, active := range activity {
+				if active {
+					viz.WriteString("\033[31m*\033[0m") // Red for active
+				} else {
+					viz.WriteString("\033[2m.\033[0m") // Dim for inactive
+				}
+			}
+
+			fmt.Printf("%s (%s) activity in last 12 hours:\n", name, strings.ToUpper(normalizedMac))
+			fmt.Printf("Active: %d minutes (%d/%d intervals, threshold %.1f Byte/s)\n", activeMinutes, activeCount, numIntervals, *activityThreshold)
+			fmt.Printf("Timeline (each char = 15 min): %s\n", viz.String())
 			fmt.Println()
 		}
 	}
