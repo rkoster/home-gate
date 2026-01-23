@@ -57,6 +57,7 @@ func main() {
 	password := flag.String("password", "", "Fritzbox password")
 	mac := flag.String("mac", "", "MAC address to query usage for (optional, uses configured if empty)")
 	period := flag.String("period", "day", "Period to query: hour or day")
+	activityThreshold := flag.Float64("activity-threshold", 0, "Minimum Byte/s to consider interval active (default 0)")
 	flag.Parse()
 
 	if *username == "" || *password == "" {
@@ -203,17 +204,22 @@ func main() {
 			fmt.Printf("Upstream: %d bytes\n", totalSnd)
 			fmt.Println()
 		} else { // day
-			// Count active intervals: where either rcv or snd > 0
+			// Count active intervals: where either rcv or snd > threshold
 			activeCount := 0
 			for i := range rcvMeasurements {
-				if rcvMeasurements[i] > 0 || (i < len(sndMeasurements) && sndMeasurements[i] > 0) {
+				rcv := rcvMeasurements[i]
+				snd := 0.0
+				if i < len(sndMeasurements) {
+					snd = sndMeasurements[i]
+				}
+				if rcv > *activityThreshold || snd > *activityThreshold {
 					activeCount++
 				}
 			}
 			activeMinutes := activeCount * 15 // 15 min intervals
 
 			fmt.Printf("%s (%s) activity in last day:\n", name, strings.ToUpper(normalizedMac))
-			fmt.Printf("Active for %d minutes (%d out of %d intervals)\n", activeMinutes, activeCount, len(rcvMeasurements))
+			fmt.Printf("Active for %d minutes (%d out of %d intervals, threshold %.1f Byte/s)\n", activeMinutes, activeCount, len(rcvMeasurements), *activityThreshold)
 			fmt.Println()
 		}
 	}
