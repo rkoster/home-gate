@@ -179,6 +179,7 @@ func blockUnblock(client *fritzbox.Client, sid, userUID string, block bool) erro
 }
 
 func main() {
+	fmt.Println("Starting Fritz!Box CLI")
 	username := flag.String("username", "", "Fritzbox username")
 	password := flag.String("password", "", "Fritzbox password")
 	mac := flag.String("mac", "", "MAC address to query usage for (optional, uses configured if empty)")
@@ -194,6 +195,8 @@ func main() {
 		log.Fatal("username and password flags are required")
 	}
 
+	fmt.Println("Parsed flags")
+
 	var policyMap map[string]int
 	var err error
 	if *policy != "" {
@@ -206,8 +209,22 @@ func main() {
 	client := fritzbox.New(*username, *password)
 	client.BaseUrl = "http://192.168.2.1"
 
+	fmt.Println("Connecting to Fritz!Box")
 	if err := client.Connect(); err != nil {
 		log.Fatalf("Failed to connect: %v", err)
+	}
+	defer client.Close()
+	fmt.Println("Connected")
+
+	var parsedPolicy map[string]int
+	if *policy != "" {
+		fmt.Printf("Parsing policy: %s\n", *policy)
+		var err error
+		parsedPolicy, err = parsePolicy(*policy)
+		if err != nil {
+			log.Fatalf("Failed to parse policy: %v", err)
+		}
+
 	}
 	defer client.Close()
 
@@ -218,16 +235,19 @@ func main() {
 		}
 	}
 
+	fmt.Println("Fetching landevices")
 	// Fetch landevices always needed for user UIDs
 	landevicesJSON, _, err := client.RestGet("/api/v0/landevice")
 	if err != nil {
 		log.Fatalf("Failed to fetch landevices: %v", err)
 	}
+	fmt.Printf("Fetched landevices: %d bytes\n", len(landevicesJSON))
 
 	var landevices LandeviceResponse
 	if err := json.Unmarshal(landevicesJSON, &landevices); err != nil {
 		log.Fatalf("Failed to parse landevices: %v", err)
 	}
+	fmt.Printf("Parsed %d devices\n", len(landevices.Landevice))
 
 	// Map UID to device and MAC to userUID
 	uidToDevice := make(map[string]Landevice)
@@ -239,9 +259,42 @@ func main() {
 		}
 	}
 
-	// Initialize maps for later use
 	var targetMACs = make([]string, 0)
 	var targetNames = make([]string, 0)
+
+	if *mac != "" {
+		// Normalize MAC: remove colons and lowercase
+		normalizedMac := strings.ToLower(strings.ReplaceAll(*mac, ":", ""))
+		targetMACs = []string{normalizedMac}
+		targetNames = []string{*mac} // Use original for display
+	} else {
+		fmt.Println("No MAC specified, fetching configured devices")
+		// Fetch configured devices
+		configJSON, _, err := client.RestGet("/api/v0/monitor/configuration")
+		if err != nil {
+			log.Fatalf("Failed to fetch monitor config: %v", err)
+		}
+		fmt.Printf("Config JSON: %s\n", string(configJSON))
+
+		var config MonitorConfig
+		if err := json.Unmarshal(configJSON, &config); err != nil {
+			log.Fatalf("Failed to parse monitor config: %v", err)
+		}
+
+		uids := strings.Split(config.DisplayHomenetDevices, ",")
+		fmt.Printf("Configured UIDs: %v\n", uids)
+
+		for _, uid := range uids {
+			if dev, ok := uidToDevice[uid]; ok {
+				normalizedMac := strings.ToLower(strings.ReplaceAll(dev.MAC, ":", ""))
+				targetMACs = append(targetMACs, normalizedMac)
+				targetNames = append(targetNames, dev.FriendlyName)
+				fmt.Printf("Added device: %s (%s)\n", dev.FriendlyName, normalizedMac)
+			}
+		}
+		fmt.Printf("Total target devices: %d\n", len(targetMACs))
+	}
+	fmt.Printf("Final target devices: %d\n", len(targetNames))
 	defer client.Close()
 
 	// Fetch datasets
@@ -397,51 +450,21 @@ func main() {
 			fmt.Printf("%s (%s) activity in last 12 hours:\n", name, strings.ToUpper(normalizedMac))
 			fmt.Printf("Active: %d minutes (%d/%d intervals, threshold %.1f Byte/s)\n", activeMinutes, activeCount, numIntervals, *activityThreshold)
 			fmt.Printf("Daily total: %d minutes (%d/96 intervals)\n", dailyActiveMinutes, dailyActiveCount)
-			if policyMap != nil {
-				todayAllowed := getTodayAllowed(policyMap)
+			if parsedPolicy != nil {
+				todayAllowed := getTodayAllowed(parsedPolicy)
 				if todayAllowed > 0 {
-					if dailyActiveMinutes > todayAllowed {
-						fmt.Printf("⚠️  Exceeded daily limit: %d/%d minutes\n", dailyActiveMinutes, todayAllowed)
+					if activeMinutes > todayAllowed {
+						fmt.Printf("⚠️  Exceeded daily limit: %d/%d minutes\n", activeMinutes, todayAllowed)
 					} else {
-						fmt.Printf("✅ Within daily limit: %d/%d minutes\n", dailyActiveMinutes, todayAllowed)
+						fmt.Printf("✅ Within daily limit: %d/%d minutes\n", activeMinutes, todayAllowed)
 					}
+				}
+			}
 				}
 			}
 			fmt.Printf("Timeline (each char = 15 min, | = day start): %s\n", viz.String())
 
-			// Enforce policy based on daily total
-			if *enforce && policyMap != nil {
-				todayAllowed := getTodayAllowed(policyMap)
-				if todayAllowed > 0 {
-					userUID := macToUserUID[normalizedMac]
-					if userUID != "" {
-						shouldBlock := dailyActiveMinutes > todayAllowed
-						// Check current blocked status
-						isBlocked := false
-						for _, dev := range landevices.Landevice {
-							if strings.ToLower(strings.ReplaceAll(dev.MAC, ":", "")) == normalizedMac {
-								isBlocked = dev.Blocked == "1"
-								break
-							}
-						}
-						if shouldBlock && !isBlocked {
-							err := blockUnblock(client, client.SID(), userUID, true)
-							if err != nil {
-								log.Printf("Failed to block %s: %v", name, err)
-							} else {
-								fmt.Printf("Blocked %s for exceeding limit\n", name)
-							}
-						} else if !shouldBlock && isBlocked {
-							err := blockUnblock(client, client.SID(), userUID, false)
-							if err != nil {
-								log.Printf("Failed to unblock %s: %v", name, err)
-							} else {
-								fmt.Printf("Unblocked %s\n", name)
-							}
-						}
-					}
-				}
-			}
+
 
 			fmt.Println()
 		}
