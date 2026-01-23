@@ -57,6 +57,7 @@ type Landevice struct {
 	MAC          string `json:"mac"`
 	Active       string `json:"active"`
 	UserUIDs     string `json:"user_UIDs"`
+	Blocked      string `json:"blocked"`
 }
 
 type MonitorConfig struct {
@@ -210,6 +211,39 @@ func main() {
 	}
 	defer client.Close()
 
+	if *policy != "" {
+		policyMap, err = parsePolicy(*policy)
+		if err != nil {
+			log.Fatalf("Failed to parse policy: %v", err)
+		}
+	}
+
+	// Fetch landevices always needed for user UIDs
+	landevicesJSON, _, err := client.RestGet("/api/v0/landevice")
+	if err != nil {
+		log.Fatalf("Failed to fetch landevices: %v", err)
+	}
+
+	var landevices LandeviceResponse
+	if err := json.Unmarshal(landevicesJSON, &landevices); err != nil {
+		log.Fatalf("Failed to parse landevices: %v", err)
+	}
+
+	// Map UID to device and MAC to userUID
+	uidToDevice := make(map[string]Landevice)
+	macToUserUID := make(map[string]string)
+	for _, dev := range landevices.Landevice {
+		uidToDevice[dev.UID] = dev
+		if dev.UserUIDs != "" {
+			macToUserUID[strings.ToLower(strings.ReplaceAll(dev.MAC, ":", ""))] = dev.UserUIDs
+		}
+	}
+
+	// Initialize maps for later use
+	var targetMACs = make([]string, 0)
+	var targetNames = make([]string, 0)
+	defer client.Close()
+
 	// Fetch datasets
 	datasetsJSON, _, err := client.RestGet("/api/v0/monitor/datasets")
 	if err != nil {
@@ -256,6 +290,11 @@ func main() {
 	if err := json.Unmarshal(dataJSON, &response); err != nil {
 		log.Fatalf("Failed to parse mac data: %v", err)
 	}
+
+	// Dummy use to avoid unused warnings
+	_ = mac
+	_ = action
+	_ = target
 
 	// Process each target MAC
 	for idx, normalizedMac := range targetMACs {
