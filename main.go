@@ -41,19 +41,27 @@ type DataPoint struct {
 	Values []interface{} `json:"values"`
 }
 
+type Landevice struct {
+	UID          string `json:"UID"`
+	FriendlyName string `json:"friendly_name"`
+	MAC          string `json:"mac"`
+	Active       string `json:"active"`
+}
+
+type MonitorConfig struct {
+	DisplayHomenetDevices string `json:"displayHomenetDevices"`
+}
+
 func main() {
 	username := flag.String("username", "", "Fritzbox username")
 	password := flag.String("password", "", "Fritzbox password")
-	mac := flag.String("mac", "", "MAC address to query usage for")
-	period := flag.String("period", "hour", "Period to query: hour or day")
+	mac := flag.String("mac", "", "MAC address to query usage for (optional, uses configured if empty)")
+	period := flag.String("period", "day", "Period to query: hour or day")
 	flag.Parse()
 
-	if *username == "" || *password == "" || *mac == "" {
-		log.Fatal("username, password, and mac flags are required")
+	if *username == "" || *password == "" {
+		log.Fatal("username and password flags are required")
 	}
-
-	// Normalize MAC: remove colons and lowercase
-	normalizedMac := strings.ToLower(strings.ReplaceAll(*mac, ":", ""))
 
 	client := fritzbox.New(*username, *password)
 	client.BaseUrl = "http://192.168.2.1"
@@ -62,6 +70,56 @@ func main() {
 		log.Fatalf("Failed to connect: %v", err)
 	}
 	defer client.Close()
+
+	var targetMACs []string
+	var targetNames []string
+
+	if *mac != "" {
+		// Normalize MAC: remove colons and lowercase
+		normalizedMac := strings.ToLower(strings.ReplaceAll(*mac, ":", ""))
+		targetMACs = []string{normalizedMac}
+		targetNames = []string{*mac} // Use original for display
+	} else {
+		// Fetch configured devices
+		configJSON, _, err := client.RestGet("/api/v0/monitor/configuration")
+		if err != nil {
+			log.Fatalf("Failed to fetch monitor config: %v", err)
+		}
+
+		var config MonitorConfig
+		if err := json.Unmarshal(configJSON, &config); err != nil {
+			log.Fatalf("Failed to parse monitor config: %v", err)
+		}
+
+		uids := strings.Split(config.DisplayHomenetDevices, ",")
+
+		// Fetch landevices
+		landevicesJSON, _, err := client.RestGet("/api/v0/landevice")
+		if err != nil {
+			log.Fatalf("Failed to fetch landevices: %v", err)
+		}
+
+		var landevices struct {
+			Landevice []Landevice `json:"landevice"`
+		}
+		if err := json.Unmarshal(landevicesJSON, &landevices); err != nil {
+			log.Fatalf("Failed to parse landevices: %v", err)
+		}
+
+		// Map UID to device
+		uidToDevice := make(map[string]Landevice)
+		for _, dev := range landevices.Landevice {
+			uidToDevice[dev.UID] = dev
+		}
+
+		for _, uid := range uids {
+			if dev, ok := uidToDevice[uid]; ok && dev.Active == "1" {
+				normalizedMac := strings.ToLower(strings.ReplaceAll(dev.MAC, ":", ""))
+				targetMACs = append(targetMACs, normalizedMac)
+				targetNames = append(targetNames, dev.FriendlyName)
+			}
+		}
+	}
 
 	// Fetch datasets
 	datasetsJSON, _, err := client.RestGet("/api/v0/monitor/datasets")
@@ -110,45 +168,53 @@ func main() {
 		log.Fatalf("Failed to parse mac data: %v", err)
 	}
 
-	// Find data for rcv and snd
-	var rcvMeasurements, sndMeasurements []float64
-	for _, sd := range response {
-		if strings.HasSuffix(sd.DataSourceName, normalizedMac) {
-			if strings.HasPrefix(sd.DataSourceName, "rcv_") {
-				rcvMeasurements = sd.Measurements
-			} else if strings.HasPrefix(sd.DataSourceName, "snd_") {
-				sndMeasurements = sd.Measurements
+	// Process each target MAC
+	for idx, normalizedMac := range targetMACs {
+		name := targetNames[idx]
+
+		// Find data for rcv and snd
+		var rcvMeasurements, sndMeasurements []float64
+		for _, sd := range response {
+			if strings.HasSuffix(sd.DataSourceName, normalizedMac) {
+				if strings.HasPrefix(sd.DataSourceName, "rcv_") {
+					rcvMeasurements = sd.Measurements
+				} else if strings.HasPrefix(sd.DataSourceName, "snd_") {
+					sndMeasurements = sd.Measurements
+				}
 			}
 		}
-	}
-	if rcvMeasurements == nil || sndMeasurements == nil {
-		log.Fatalf("MAC %s not found in subset data", *mac)
-	}
-
-	if *period == "hour" {
-		// Calculate totals: each measurement is Byte/s for intervalSeconds
-		var totalRcv, totalSnd int64
-		for _, val := range rcvMeasurements {
-			totalRcv += int64(val * intervalSeconds)
-		}
-		for _, val := range sndMeasurements {
-			totalSnd += int64(val * intervalSeconds)
+		if rcvMeasurements == nil || sndMeasurements == nil {
+			fmt.Printf("MAC %s (%s) not found in subset data\n", name, normalizedMac)
+			continue
 		}
 
-		fmt.Printf("MAC %s usage in last hour:\n", *mac)
-		fmt.Printf("Downstream: %d bytes\n", totalRcv)
-		fmt.Printf("Upstream: %d bytes\n", totalSnd)
-	} else { // day
-		// Count active intervals: where either rcv or snd > 0
-		activeCount := 0
-		for i := range rcvMeasurements {
-			if rcvMeasurements[i] > 0 || (i < len(sndMeasurements) && sndMeasurements[i] > 0) {
-				activeCount++
+		if *period == "hour" {
+			// Calculate totals: each measurement is Byte/s for intervalSeconds
+			var totalRcv, totalSnd int64
+			for _, val := range rcvMeasurements {
+				totalRcv += int64(val * intervalSeconds)
 			}
-		}
-		activeMinutes := activeCount * 15 // 15 min intervals
+			for _, val := range sndMeasurements {
+				totalSnd += int64(val * intervalSeconds)
+			}
 
-		fmt.Printf("MAC %s activity in last day:\n", *mac)
-		fmt.Printf("Active for %d minutes (%d out of %d intervals)\n", activeMinutes, activeCount, len(rcvMeasurements))
+			fmt.Printf("%s (%s) usage in last hour:\n", name, strings.ToUpper(normalizedMac))
+			fmt.Printf("Downstream: %d bytes\n", totalRcv)
+			fmt.Printf("Upstream: %d bytes\n", totalSnd)
+			fmt.Println()
+		} else { // day
+			// Count active intervals: where either rcv or snd > 0
+			activeCount := 0
+			for i := range rcvMeasurements {
+				if rcvMeasurements[i] > 0 || (i < len(sndMeasurements) && sndMeasurements[i] > 0) {
+					activeCount++
+				}
+			}
+			activeMinutes := activeCount * 15 // 15 min intervals
+
+			fmt.Printf("%s (%s) activity in last day:\n", name, strings.ToUpper(normalizedMac))
+			fmt.Printf("Active for %d minutes (%d out of %d intervals)\n", activeMinutes, activeCount, len(rcvMeasurements))
+			fmt.Println()
+		}
 	}
 }
