@@ -23,5 +23,6 @@ WORKDIR /root/
 # Copy the binary from builder stage
 COPY --from=builder /app/home-gate .
 
-# Run the binary
-CMD ["./home-gate"]
+# Set entrypoint and default command
+ENTRYPOINT ["./home-gate"]
+CMD ["monitor"]
