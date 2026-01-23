@@ -45,6 +45,7 @@ func main() {
 	username := flag.String("username", "", "Fritzbox username")
 	password := flag.String("password", "", "Fritzbox password")
 	mac := flag.String("mac", "", "MAC address to query usage for")
+	period := flag.String("period", "hour", "Period to query: hour or day")
 	flag.Parse()
 
 	if *username == "" || *password == "" || *mac == "" {
@@ -85,8 +86,21 @@ func main() {
 		log.Fatal("macaddrs dataset not found")
 	}
 
-	// Fetch subset0001 (1 hour data)
-	dataJSON, _, err := client.RestGet("/api/v0/monitor/macaddrs/subset0001")
+	var subsetUID string
+	var intervalSeconds float64
+	switch *period {
+	case "hour":
+		subsetUID = "subset0001"
+		intervalSeconds = 60 // 1 min
+	case "day":
+		subsetUID = "subset0002"
+		intervalSeconds = 900 // 15 min
+	default:
+		log.Fatalf("Invalid period: %s. Use 'hour' or 'day'", *period)
+	}
+
+	// Fetch subset data
+	dataJSON, _, err := client.RestGet("/api/v0/monitor/macaddrs/" + subsetUID)
 	if err != nil {
 		log.Fatalf("Failed to fetch mac data: %v", err)
 	}
@@ -111,16 +125,30 @@ func main() {
 		log.Fatalf("MAC %s not found in subset data", *mac)
 	}
 
-	// Calculate totals: each measurement is Byte/s for 60s
-	var totalRcv, totalSnd int64
-	for _, val := range rcvMeasurements {
-		totalRcv += int64(val * 60)
-	}
-	for _, val := range sndMeasurements {
-		totalSnd += int64(val * 60)
-	}
+	if *period == "hour" {
+		// Calculate totals: each measurement is Byte/s for intervalSeconds
+		var totalRcv, totalSnd int64
+		for _, val := range rcvMeasurements {
+			totalRcv += int64(val * intervalSeconds)
+		}
+		for _, val := range sndMeasurements {
+			totalSnd += int64(val * intervalSeconds)
+		}
 
-	fmt.Printf("MAC %s usage in last hour:\n", *mac)
-	fmt.Printf("Downstream: %d bytes\n", totalRcv)
-	fmt.Printf("Upstream: %d bytes\n", totalSnd)
+		fmt.Printf("MAC %s usage in last hour:\n", *mac)
+		fmt.Printf("Downstream: %d bytes\n", totalRcv)
+		fmt.Printf("Upstream: %d bytes\n", totalSnd)
+	} else { // day
+		// Count active intervals: where either rcv or snd > 0
+		activeCount := 0
+		for i := range rcvMeasurements {
+			if rcvMeasurements[i] > 0 || (i < len(sndMeasurements) && sndMeasurements[i] > 0) {
+				activeCount++
+			}
+		}
+		activeMinutes := activeCount * 15 // 15 min intervals
+
+		fmt.Printf("MAC %s activity in last day:\n", *mac)
+		fmt.Printf("Active for %d minutes (%d out of %d intervals)\n", activeMinutes, activeCount, len(rcvMeasurements))
+	}
 }
