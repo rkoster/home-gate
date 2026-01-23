@@ -113,7 +113,7 @@ func main() {
 		}
 
 		for _, uid := range uids {
-			if dev, ok := uidToDevice[uid]; ok && dev.Active == "1" {
+			if dev, ok := uidToDevice[uid]; ok {
 				normalizedMac := strings.ToLower(strings.ReplaceAll(dev.MAC, ":", ""))
 				targetMACs = append(targetMACs, normalizedMac)
 				targetNames = append(targetNames, dev.FriendlyName)
