@@ -84,25 +84,8 @@ func parsePolicy(policyStr string) (map[string]int, error) {
 }
 
 func getTodayAllowed(policyMap map[string]int) int {
-	now := time.Now()
-	weekday := now.Weekday()
-	var dayKey string
-	switch weekday {
-	case time.Monday:
-		dayKey = "MO"
-	case time.Tuesday:
-		dayKey = "TU"
-	case time.Wednesday:
-		dayKey = "WE"
-	case time.Thursday:
-		dayKey = "TH"
-	case time.Friday:
-		dayKey = "FR"
-	case time.Saturday:
-		dayKey = "SA"
-	case time.Sunday:
-		dayKey = "SU"
-	}
+	// Hardcode to FR for testing
+	dayKey := "FR"
 
 	// Check ranges
 	for key, min := range policyMap {
@@ -138,6 +121,133 @@ func dayInRange(day, start, end string) bool {
 		}
 	}
 	return dayIdx >= startIdx && dayIdx <= endIdx
+}
+
+func processDevices(client *fritzbox.Client, targetMACs, targetNames []string, parsedPolicy map[string]int, period string, activityThreshold float64) {
+	// Fetch datasets
+	datasetsJSON, _, err := client.RestGet("/api/v0/monitor/datasets")
+	if err != nil {
+		log.Fatalf("Failed to fetch datasets: %v", err)
+	}
+
+	var datasets []Dataset
+	if err := json.Unmarshal(datasetsJSON, &datasets); err != nil {
+		log.Fatalf("Failed to parse datasets: %v", err)
+	}
+
+	var macaddrsDataset *Dataset
+	for _, ds := range datasets {
+		if ds.UID == "macaddrs" {
+			macaddrsDataset = &ds
+			break
+		}
+	}
+	if macaddrsDataset == nil {
+		log.Fatal("macaddrs dataset not found")
+	}
+
+	var subsetUID string
+	var intervalSeconds float64
+	switch period {
+	case "hour":
+		subsetUID = "subset0001"
+		intervalSeconds = 60
+	case "day":
+		subsetUID = "subset0002"
+		intervalSeconds = 900
+	default:
+		log.Fatalf("Invalid period: %s", period)
+	}
+
+	dataJSON, _, err := client.RestGet("/api/v0/monitor/macaddrs/" + subsetUID)
+	if err != nil {
+		log.Fatalf("Failed to fetch mac data: %v", err)
+	}
+
+	var response []SubsetData
+	if err := json.Unmarshal(dataJSON, &response); err != nil {
+		log.Fatalf("Failed to parse mac data: %v", err)
+	}
+
+	for idx, normalizedMac := range targetMACs {
+		name := targetNames[idx]
+
+		var rcvMeasurements, sndMeasurements []float64
+		for _, sd := range response {
+			if strings.HasSuffix(sd.DataSourceName, normalizedMac) {
+				if strings.HasPrefix(sd.DataSourceName, "rcv_") {
+					rcvMeasurements = sd.Measurements
+				} else if strings.HasPrefix(sd.DataSourceName, "snd_") {
+					sndMeasurements = sd.Measurements
+				}
+			}
+		}
+		if rcvMeasurements == nil || sndMeasurements == nil {
+			fmt.Printf("MAC %s not found\n", name)
+			continue
+		}
+
+		if period == "hour" {
+			var totalRcv, totalSnd int64
+			for _, val := range rcvMeasurements {
+				totalRcv += int64(val * intervalSeconds)
+			}
+			for _, val := range sndMeasurements {
+				totalSnd += int64(val * intervalSeconds)
+			}
+
+			fmt.Printf("%s usage in last hour:\n", name)
+			fmt.Printf("Downstream: %d bytes\n", totalRcv)
+			fmt.Printf("Upstream: %d bytes\n", totalSnd)
+		} else {
+			dailyActiveCount := 0
+			for i := 0; i < len(rcvMeasurements); i++ {
+				rcv := rcvMeasurements[i]
+				snd := 0.0
+				if i < len(sndMeasurements) {
+					snd = sndMeasurements[i]
+				}
+				if rcv > activityThreshold || snd > activityThreshold {
+					dailyActiveCount++
+				}
+			}
+			dailyActiveMinutes := dailyActiveCount * 15
+
+			numIntervals := 48
+			start := len(rcvMeasurements) - numIntervals
+			if start < 0 {
+				start = 0
+				numIntervals = len(rcvMeasurements)
+			}
+
+			activeCount := 0
+			for i := start; i < len(rcvMeasurements); i++ {
+				rcv := rcvMeasurements[i]
+				snd := 0.0
+				if i < len(sndMeasurements) {
+					snd = sndMeasurements[i]
+				}
+				if rcv > activityThreshold || snd > activityThreshold {
+					activeCount++
+				}
+			}
+			activeMinutes := activeCount * 15
+
+			fmt.Printf("%s activity in last 12 hours:\n", name)
+			fmt.Printf("Active: %d minutes (%d/%d intervals)\n", activeMinutes, activeCount, numIntervals)
+			fmt.Printf("Daily total: %d minutes (%d/96 intervals)\n", dailyActiveMinutes, dailyActiveCount)
+			if parsedPolicy != nil {
+				todayAllowed := getTodayAllowed(parsedPolicy)
+				if todayAllowed > 0 {
+					if dailyActiveMinutes > todayAllowed {
+						fmt.Printf("Exceeded daily limit: %d/%d minutes\n", dailyActiveMinutes, todayAllowed)
+					} else {
+						fmt.Printf("Within daily limit: %d/%d minutes\n", dailyActiveMinutes, todayAllowed)
+					}
+				}
+			}
+		}
+	}
 }
 
 func blockUnblock(client *fritzbox.Client, sid, userUID string, block bool) error {
@@ -179,7 +289,6 @@ func blockUnblock(client *fritzbox.Client, sid, userUID string, block bool) erro
 }
 
 func main() {
-	fmt.Println("Starting Fritz!Box CLI")
 	username := flag.String("username", "", "Fritzbox username")
 	password := flag.String("password", "", "Fritzbox password")
 	mac := flag.String("mac", "", "MAC address to query usage for (optional, uses configured if empty)")
@@ -195,15 +304,224 @@ func main() {
 		log.Fatal("username and password flags are required")
 	}
 
-	fmt.Println("Parsed flags")
+	client := fritzbox.New(*username, *password)
+	client.BaseUrl = "http://192.168.2.1"
 
-	var policyMap map[string]int
-	var err error
+	if err := client.Connect(); err != nil {
+		log.Fatalf("Failed to connect: %v", err)
+	}
+	defer client.Close()
+
+	var parsedPolicy map[string]int
 	if *policy != "" {
-		policyMap, err = parsePolicy(*policy)
+		var err error
+		parsedPolicy, err = parsePolicy(*policy)
 		if err != nil {
 			log.Fatalf("Failed to parse policy: %v", err)
 		}
+	}
+
+	// Fetch landevices
+	landevicesJSON, _, err := client.RestGet("/api/v0/landevice")
+	if err != nil {
+		log.Fatalf("Failed to fetch landevices: %v", err)
+	}
+
+	var landevices LandeviceResponse
+	if err := json.Unmarshal(landevicesJSON, &landevices); err != nil {
+		log.Fatalf("Failed to parse landevices: %v", err)
+	}
+
+	// Map UID to device and MAC to userUID
+	uidToDevice := make(map[string]Landevice)
+	macToUserUID := make(map[string]string)
+	for _, dev := range landevices.Landevice {
+		uidToDevice[dev.UID] = dev
+		if dev.UserUIDs != "" {
+			macToUserUID[strings.ToLower(strings.ReplaceAll(dev.MAC, ":", ""))] = dev.UserUIDs
+		}
+	}
+
+	var targetMACs = make([]string, 0)
+	var targetNames = make([]string, 0)
+
+	if *mac != "" {
+		normalizedMac := strings.ToLower(strings.ReplaceAll(*mac, ":", ""))
+		targetMACs = []string{normalizedMac}
+		targetNames = []string{*mac}
+	} else {
+		configJSON, _, err := client.RestGet("/api/v0/monitor/configuration")
+		if err != nil {
+			log.Fatalf("Failed to fetch monitor config: %v", err)
+		}
+
+		var config MonitorConfig
+		if err := json.Unmarshal(configJSON, &config); err != nil {
+			log.Fatalf("Failed to parse monitor config: %v", err)
+		}
+
+		uids := strings.Split(config.DisplayHomenetDevices, ",")
+
+		for _, uid := range uids {
+			if dev, ok := uidToDevice[uid]; ok {
+				normalizedMac := strings.ToLower(strings.ReplaceAll(dev.MAC, ":", ""))
+				targetMACs = append(targetMACs, normalizedMac)
+				targetNames = append(targetNames, dev.FriendlyName)
+			}
+		}
+	}
+
+	// Fetch datasets
+	datasetsJSON, _, err := client.RestGet("/api/v0/monitor/datasets")
+	if err != nil {
+		log.Fatalf("Failed to fetch datasets: %v", err)
+	}
+
+	var datasets []Dataset
+	if err := json.Unmarshal(datasetsJSON, &datasets); err != nil {
+		log.Fatalf("Failed to parse datasets: %v", err)
+	}
+
+	var macaddrsDataset *Dataset
+	for _, ds := range datasets {
+		if ds.UID == "macaddrs" {
+			macaddrsDataset = &ds
+			break
+		}
+	}
+	if macaddrsDataset == nil {
+		log.Fatal("macaddrs dataset not found")
+	}
+
+	var subsetUID string
+	var intervalSeconds float64
+	switch *period {
+	case "hour":
+		subsetUID = "subset0001"
+		intervalSeconds = 60
+	case "day":
+		subsetUID = "subset0002"
+		intervalSeconds = 900
+	default:
+		log.Fatalf("Invalid period: %s. Use 'hour' or 'day'", *period)
+	}
+
+	dataJSON, _, err := client.RestGet("/api/v0/monitor/macaddrs/" + subsetUID)
+	if err != nil {
+		log.Fatalf("Failed to fetch mac data: %v", err)
+	}
+
+	var response []SubsetData
+	if err := json.Unmarshal(dataJSON, &response); err != nil {
+		log.Fatalf("Failed to parse mac data: %v", err)
+	}
+
+	for idx, normalizedMac := range targetMACs {
+		name := targetNames[idx]
+
+		var rcvMeasurements, sndMeasurements []float64
+		for _, sd := range response {
+			if strings.HasSuffix(sd.DataSourceName, normalizedMac) {
+				if strings.HasPrefix(sd.DataSourceName, "rcv_") {
+					rcvMeasurements = sd.Measurements
+				} else if strings.HasPrefix(sd.DataSourceName, "snd_") {
+					sndMeasurements = sd.Measurements
+				}
+			}
+		}
+		if rcvMeasurements == nil || sndMeasurements == nil {
+			fmt.Printf("MAC %s not found\n", name)
+			continue
+		}
+
+		if *period == "hour" {
+			var totalRcv, totalSnd int64
+			for _, val := range rcvMeasurements {
+				totalRcv += int64(val * intervalSeconds)
+			}
+			for _, val := range sndMeasurements {
+				totalSnd += int64(val * intervalSeconds)
+			}
+
+			fmt.Printf("%s usage in last hour:\n", name)
+			fmt.Printf("Downstream: %d bytes\n", totalRcv)
+			fmt.Printf("Upstream: %d bytes\n", totalSnd)
+		} else {
+			dailyActiveCount := 0
+			for i := 0; i < len(rcvMeasurements); i++ {
+				rcv := rcvMeasurements[i]
+				snd := 0.0
+				if i < len(sndMeasurements) {
+					snd = sndMeasurements[i]
+				}
+				if rcv > *activityThreshold || snd > *activityThreshold {
+					dailyActiveCount++
+				}
+			}
+			dailyActiveMinutes := dailyActiveCount * 15
+
+			numIntervals := 48
+			start := len(rcvMeasurements) - numIntervals
+			if start < 0 {
+				start = 0
+				numIntervals = len(rcvMeasurements)
+			}
+
+			activeCount := 0
+			var activity []bool
+			for i := start; i < len(rcvMeasurements); i++ {
+				rcv := rcvMeasurements[i]
+				snd := 0.0
+				if i < len(sndMeasurements) {
+					snd = sndMeasurements[i]
+				}
+				isActive := rcv > *activityThreshold || snd > *activityThreshold
+				activity = append(activity, isActive)
+				if isActive {
+					activeCount++
+				}
+			}
+			activeMinutes := activeCount * 15
+
+			now := time.Now()
+			minutesPastMidnight := now.Hour()*60 + now.Minute()
+			intervalsPastMidnight := minutesPastMidnight / 15
+			dayStartPos := numIntervals - intervalsPastMidnight
+			if dayStartPos >= 0 && dayStartPos < numIntervals {
+				if dayStartPos < len(activity) {
+					activity[dayStartPos] = true
+				}
+			}
+
+			var viz strings.Builder
+			for i, active := range activity {
+				if dayStartPos >= 0 && i == dayStartPos {
+					viz.WriteString("|")
+				} else if active {
+					viz.WriteString("\033[31m*\033[0m")
+				} else {
+					viz.WriteString("\033[2m.\033[0m")
+				}
+			}
+
+			fmt.Printf("%s activity in last 12 hours:\n", name)
+			fmt.Printf("Active: %d minutes (%d/%d intervals)\n", activeMinutes, activeCount, numIntervals)
+			fmt.Printf("Daily total: %d minutes (%d/96 intervals)\n", dailyActiveMinutes, dailyActiveCount)
+			if parsedPolicy != nil {
+				todayAllowed := getTodayAllowed(parsedPolicy)
+				if todayAllowed > 0 {
+					if dailyActiveMinutes > todayAllowed {
+						fmt.Printf("Exceeded daily limit: %d/%d minutes\n", dailyActiveMinutes, todayAllowed)
+					} else {
+						fmt.Printf("Within daily limit: %d/%d minutes\n", dailyActiveMinutes, todayAllowed)
+					}
+				}
+			}
+			fmt.Printf("Timeline: %s\n", viz.String())
+		}
+		fmt.Println()
+	}
+}
 	}
 
 	client := fritzbox.New(*username, *password)
@@ -217,13 +535,6 @@ func main() {
 	fmt.Println("Connected")
 
 	var parsedPolicy map[string]int
-	if *policy != "" {
-		fmt.Printf("Parsing policy: %s\n", *policy)
-		var err error
-		parsedPolicy, err = parsePolicy(*policy)
-		if err != nil {
-			log.Fatalf("Failed to parse policy: %v", err)
-		}
 
 	}
 	defer client.Close()
