@@ -11,6 +11,8 @@ import (
 	fritzboxlib "github.com/ByteSizedMarius/go-fritzbox-api/v2"
 )
 
+//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -o fritzboxfakes/fake_client.go . Client
+
 type Client interface {
 	Connect() error
 	RestGet(path string) ([]byte, int, error)

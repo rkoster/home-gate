@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -o policyfakes/fake_clock.go . Clock
+
 type Clock interface {
 	Now() time.Time
 }
