@@ -5,7 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	fritzbox "github.com/ByteSizedMarius/go-fritzbox-api/v2"
 )
@@ -52,16 +55,102 @@ type MonitorConfig struct {
 	DisplayHomenetDevices string `json:"displayHomenetDevices"`
 }
 
+func parsePolicy(policyStr string) (map[string]int, error) {
+	policy := make(map[string]int)
+	re := regexp.MustCompile(`([A-Z-]+)(\d+)`)
+	matches := re.FindAllStringSubmatch(policyStr, -1)
+	for _, match := range matches {
+		if len(match) == 3 {
+			min, err := strconv.Atoi(match[2])
+			if err != nil {
+				return nil, err
+			}
+			policy[match[1]] = min
+		}
+	}
+	if len(policy) == 0 {
+		return nil, fmt.Errorf("no valid policy entries found")
+	}
+	return policy, nil
+}
+
+func getTodayAllowed(policyMap map[string]int) int {
+	now := time.Now()
+	weekday := now.Weekday()
+	var dayKey string
+	switch weekday {
+	case time.Monday:
+		dayKey = "MO"
+	case time.Tuesday:
+		dayKey = "TU"
+	case time.Wednesday:
+		dayKey = "WE"
+	case time.Thursday:
+		dayKey = "TH"
+	case time.Friday:
+		dayKey = "FR"
+	case time.Saturday:
+		dayKey = "SA"
+	case time.Sunday:
+		dayKey = "SU"
+	}
+
+	// Check ranges
+	for key, min := range policyMap {
+		if strings.Contains(key, "-") {
+			parts := strings.Split(key, "-")
+			if len(parts) == 2 {
+				if dayInRange(dayKey, parts[0], parts[1]) {
+					return min
+				}
+			}
+		} else if key == dayKey {
+			return min
+		}
+	}
+	return 0 // Default if not found
+}
+
+func dayInRange(day, start, end string) bool {
+	days := []string{"MO", "TU", "WE", "TH", "FR", "SA", "SU"}
+	startIdx, endIdx := -1, -1
+	for i, d := range days {
+		if d == start {
+			startIdx = i
+		}
+		if d == end {
+			endIdx = i
+		}
+	}
+	dayIdx := -1
+	for i, d := range days {
+		if d == day {
+			dayIdx = i
+		}
+	}
+	return dayIdx >= startIdx && dayIdx <= endIdx
+}
+
 func main() {
 	username := flag.String("username", "", "Fritzbox username")
 	password := flag.String("password", "", "Fritzbox password")
 	mac := flag.String("mac", "", "MAC address to query usage for (optional, uses configured if empty)")
 	period := flag.String("period", "day", "Period to query: hour or day")
 	activityThreshold := flag.Float64("activity-threshold", 0, "Minimum Byte/s to consider interval active (default 0)")
+	policy := flag.String("policy", "", "Policy string for allowed minutes per day range (e.g., MO-TH90FR120SA-SU180)")
 	flag.Parse()
 
 	if *username == "" || *password == "" {
 		log.Fatal("username and password flags are required")
+	}
+
+	var policyMap map[string]int
+	var err error
+	if *policy != "" {
+		policyMap, err = parsePolicy(*policy)
+		if err != nil {
+			log.Fatalf("Failed to parse policy: %v", err)
+		}
 	}
 
 	client := fritzbox.New(*username, *password)
@@ -229,7 +318,7 @@ func main() {
 			}
 			activeMinutes := activeCount * 15
 
-			// ASCII visualization (heatmap-like with colors)
+			// ASCII visualization
 			var viz strings.Builder
 			for _, active := range activity {
 				if active {
@@ -241,6 +330,16 @@ func main() {
 
 			fmt.Printf("%s (%s) activity in last 12 hours:\n", name, strings.ToUpper(normalizedMac))
 			fmt.Printf("Active: %d minutes (%d/%d intervals, threshold %.1f Byte/s)\n", activeMinutes, activeCount, numIntervals, *activityThreshold)
+			if policyMap != nil {
+				todayAllowed := getTodayAllowed(policyMap)
+				if todayAllowed > 0 {
+					if activeMinutes > todayAllowed {
+						fmt.Printf("⚠️  Exceeded daily limit: %d/%d minutes\n", activeMinutes, todayAllowed)
+					} else {
+						fmt.Printf("✅ Within daily limit: %d/%d minutes\n", activeMinutes, todayAllowed)
+					}
+				}
+			}
 			fmt.Printf("Timeline (each char = 15 min): %s\n", viz.String())
 			fmt.Println()
 		}
