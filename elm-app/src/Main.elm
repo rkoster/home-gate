@@ -5,6 +5,11 @@ import Html exposing (Html, div, h2, ul, li, text, span)
 import Html.Attributes exposing (style)
 import Http
 import Json.Decode as Decode exposing (Decoder)
+import List.Extra exposing (getAt)
+
+import Bulma.Layout exposing (container)
+import Bulma.Elements exposing (title)
+import Bulma.CDN exposing (stylesheet)
 
 intervalMinutes : Int
 intervalMinutes = 15
@@ -105,12 +110,19 @@ view : Model -> Html Msg
 view model =
     case model of
         Loading ->
-            div [] [ text "Loading…" ]
+            container []
+                [ stylesheet
+                , h2 [ Html.Attributes.class "title is-2" ] [ text "Loading…" ]
+                ]
         Failure err ->
-            div [ style "color" "red" ] [ text ("Error: " ++ err) ]
+            container []
+                [ stylesheet
+                , h2 [ Html.Attributes.class "title is-2 has-text-danger" ] [ text ("Error: " ++ err) ]
+                ]
         Success status ->
-            div []
-                [ h2 [] [ text "Device Timelines" ]
+            container []
+                [ stylesheet
+                , h2 [ Html.Attributes.class "title is-2" ] [ text "Device Timelines" ]
                 , devicesListView status.devices
                 ]
 
@@ -118,16 +130,54 @@ devicesListView : List Device -> Html Msg
 devicesListView devices =
     ul [] (List.map deviceTimelineView devices)
 
+hourMarkerView : Int -> Html msg
+hourMarkerView idx =
+    if modBy 4 (idx + 1) == 0 then
+        let
+            hour = String.fromInt ((idx + 1) // 4)
+        in
+        div [ style "display" "flex", style "align-items" "center", style "width" "2px", style "height" "32px", style "margin-right" "6px" ]
+            [ div [ style "width" "2px", style "height" "32px", style "background-color" "#333", style "margin-right" "4px" ] []
+            , span [ style "color" "#aaa", style "font-size" "13px", style "padding-left" "4px" ] [ text hour ]
+            ]
+    else
+        div [ style "width" "8px" ] []
+
+hourContainerView : Int -> List (Int, Bool) -> Html msg
+hourContainerView h timeline =
+    let
+        startIdx = h * 4
+        segmentViews =
+            List.map (\i ->
+                let
+                    (_, isA) = List.Extra.getAt i timeline |> Maybe.withDefault (i, False)
+                in
+                timelineBoxView i isA
+            ) (List.range startIdx (startIdx + 3))
+    in
+    div
+        [ style "display" "flex"
+        , style "flex-direction" "column"
+        , style "align-items" "center"
+        , style "border-left" "2px solid #bbb"
+        , style "width" "40px"
+        , style "padding-left" "0px"
+        ]
+        [ span [ style "color" "#aaa", style "font-size" "11px", style "margin-bottom" "2px", style "align-self" "flex-start", style "margin-left" "2px" ] [ text (String.fromInt h) ]
+        , div [ style "display" "flex" ] segmentViews
+        ]
+
 deviceTimelineView : Device -> Html Msg
 deviceTimelineView device =
     let
         timeline = makeTimeline device.activeSlots
     in
-    li []
-        [ h2 [] [ text device.name ]
+    div [ Html.Attributes.class "box" ]
+        [ h2 [ Html.Attributes.class "title is-4" ] [ text device.name ]
         , div [] [ text ("Total minutes today: " ++ String.fromInt device.dailyActiveMinutes) ]
-        , div [ style "display" "flex", style "margin" "6px 0" ] (List.map (\(i, isA) -> timelineBoxView i isA) timeline)
-        ]
+    , div [ style "display" "flex", style "margin" "6px 0" ]
+        (List.map (\h -> hourContainerView h timeline) (List.range 0 23))
+    ]
 
 timelineBoxView : Int -> Bool -> Html msg
 timelineBoxView idx isActive =
