@@ -63,6 +63,7 @@ func runWeb(cmd *cobra.Command, args []string) {
 	go func() {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Content-Type", "application/json")
 			status := state.Get()
 			if err := json.NewEncoder(w).Encode(status); err != nil {

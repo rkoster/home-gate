@@ -1,0 +1,10 @@
+# Ignore Go build artifacts
+home-gate
+
+# Optional: OS, editor, generic patterns
+*.log
+*.tmp
+*.swp
+*.bak
+.DS_Store
+Thumbs.db

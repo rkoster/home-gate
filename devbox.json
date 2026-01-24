@@ -3,7 +3,8 @@
   "packages": [
     "go@latest",
     "ginkgo@latest",
-    "golangci-lint@latest"
+    "golangci-lint@latest",
+    "elmPackages.elm@latest"
   ],
   "shell": {
     "init_hook": [

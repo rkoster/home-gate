@@ -1,0 +1,17 @@
+# Elm project build artifacts
+elm.js
+elm-stuff/
+
+# npm/node
+node_modules/
+.cache/
+
+# Editor/project clutter
+*.log
+*.tmp
+*.swp
+*.bak
+.DS_Store
+
+# OS/backup files
+Thumbs.db
