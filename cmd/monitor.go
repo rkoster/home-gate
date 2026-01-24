@@ -199,9 +199,19 @@ func RunMonitor(client fritzbox.Client, pm *policy.PolicyManager, mac string, pe
 			fmt.Fprintf(writer, "Downstream: %d bytes\n", totalRcv)
 			fmt.Fprintf(writer, "Upstream: %d bytes\n", totalSnd)
 		} else {
-			// Daily activity
+			// Compute today's active intervals only (midnight -> now)
+			now := time.Now()
+			minutesPastMidnight := now.Hour()*60 + now.Minute()
+			intervalsSinceMidnight := minutesPastMidnight / 15
+
+			// dailyStart is the index in the measurements that corresponds to today's midnight
+			dailyStart := len(rcvMeasurements) - intervalsSinceMidnight
+			if dailyStart < 0 {
+				dailyStart = 0
+			}
+
 			dailyActiveCount := 0
-			for i := 0; i < len(rcvMeasurements); i++ {
+			for i := dailyStart; i < len(rcvMeasurements); i++ {
 				rcv := rcvMeasurements[i]
 				snd := 0.0
 				if i < len(sndMeasurements) {
@@ -238,9 +248,7 @@ func RunMonitor(client fritzbox.Client, pm *policy.PolicyManager, mac string, pe
 			activeMinutes := activeCount * 15
 
 			// Day start marker
-			now := time.Now()
-			minutesPastMidnight := now.Hour()*60 + now.Minute()
-			intervalsPastMidnight := minutesPastMidnight / 15
+			intervalsPastMidnight := intervalsSinceMidnight
 			dayStartPos := numIntervals - intervalsPastMidnight
 
 			var viz strings.Builder
@@ -257,27 +265,53 @@ func RunMonitor(client fritzbox.Client, pm *policy.PolicyManager, mac string, pe
 			fmt.Fprintf(writer, "%s activity in last 12 hours:\n", name)
 			fmt.Fprintf(writer, "Active: %d minutes (%d/%d intervals)\n", activeMinutes, activeCount, numIntervals)
 			fmt.Fprintf(writer, "Daily total: %d minutes (%d/96 intervals)\n", dailyActiveMinutes, dailyActiveCount)
-			if pm != nil && pm.IsWithinPolicy(dailyActiveMinutes) {
-				fmt.Fprintf(writer, "Within policy\n")
-				if enforce && device.Blocked == "1" {
-					if userUID, ok := macToUserUID[normalizedMac]; ok && userUID != "" {
-						err := client.BlockDevice(userUID, false)
-						if err != nil {
-							fmt.Fprintf(writer, "Failed to unblock device: %v\n", err)
+			if pm != nil {
+				allowed := pm.AllowedToday()
+				if dailyActiveMinutes < allowed {
+					fmt.Fprintf(writer, "Within policy\n")
+					if enforce && device.Blocked == "1" {
+						// prefer userUID from the landevice entry, fallback to macToUserUID map
+						userUID := device.UserUIDs
+						if userUID == "" {
+							if u, ok := macToUserUID[normalizedMac]; ok {
+								userUID = u
+							}
+						}
+						if userUID != "" {
+							err := client.BlockDevice(userUID, false)
+							if err != nil {
+								fmt.Fprintf(writer, "Failed to unblock device: %v\n", err)
+							} else {
+								fmt.Fprintf(writer, "Device unblocked\n")
+							}
 						} else {
-							fmt.Fprintf(writer, "Device unblocked\n")
+							fmt.Fprintf(writer, "No user UID found for device, cannot unblock\n")
 						}
 					}
-				}
-			} else if pm != nil {
-				fmt.Fprintf(writer, "Exceeded policy\n")
-				if enforce {
-					if userUID, ok := macToUserUID[normalizedMac]; ok && userUID != "" {
-						err := client.BlockDevice(userUID, true)
-						if err != nil {
-							fmt.Fprintf(writer, "Failed to block device: %v\n", err)
+				} else {
+					fmt.Fprintf(writer, "Exceeded policy\n")
+					if enforce {
+						// prefer userUID from the landevice entry, fallback to macToUserUID map
+						userUID := device.UserUIDs
+						if userUID == "" {
+							if u, ok := macToUserUID[normalizedMac]; ok {
+								userUID = u
+							}
+						}
+						if userUID == "" {
+							// try landevice UID as a last resort
+							userUID = device.UID
+						}
+						if userUID != "" {
+							fmt.Fprintf(writer, "Blocking using UID: %s\n", userUID)
+							err := client.BlockDevice(userUID, true)
+							if err != nil {
+								fmt.Fprintf(writer, "Failed to block device: %v\n", err)
+							} else {
+								fmt.Fprintf(writer, "Device blocked\n")
+							}
 						} else {
-							fmt.Fprintf(writer, "Device blocked\n")
+							fmt.Fprintf(writer, "No user UID found for device, cannot block\n")
 						}
 					}
 				}
