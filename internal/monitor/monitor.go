@@ -27,6 +27,14 @@ type Options struct {
 	TestClient fritzbox.Client
 }
 
+// DeviceUsage holds per-device activity and usage info for the current day.
+type DeviceUsage struct {
+	MAC                string   `json:"mac"`
+	Name               string   `json:"name"`
+	DailyActiveMinutes int      `json:"daily_active_minutes"`
+	Active             []string `json:"active"`
+}
+
 // Summary holds high-level details about a monitoring run.
 type Summary struct {
 	DevicesChecked int
@@ -34,6 +42,7 @@ type Summary struct {
 	Errors         []error
 	StartTime      time.Time
 	Duration       time.Duration
+	Devices        []DeviceUsage `json:"devices"`
 }
 
 // Run executes a monitoring run with the given options, returning a summary.
@@ -208,6 +217,62 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 				}
 			}
 			dailyActiveMinutes := dailyActiveCount * 15
+
+			// Gather active *indexes* for today to group as ISO intervals
+			var activeIndexes []int
+			for i := dailyStart; i < len(rcvMeasurements); i++ {
+				if i < 0 {
+					continue
+				}
+				rcv := rcvMeasurements[i]
+				snd := 0.0
+				if i < len(sndMeasurements) {
+					snd = sndMeasurements[i]
+				}
+				if rcv > opts.ActivityThreshold || snd > opts.ActivityThreshold {
+					activeIndexes = append(activeIndexes, i)
+				}
+			}
+
+			// Collapse contiguous intervals into ISO blocks
+			var activeBlocks []string
+			if len(activeIndexes) > 0 {
+				loc := time.Local
+				today := time.Now().In(loc)
+				const step = 15 // minutes
+				blockStart := 0
+				for i := 1; i <= len(activeIndexes); i++ {
+					if i == len(activeIndexes) || activeIndexes[i] != activeIndexes[i-1]+1 {
+						startIdx := activeIndexes[blockStart]
+						endIdx := activeIndexes[i-1]
+						startTime := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc).Add(time.Duration(startIdx*step) * time.Minute)
+						durationMin := (endIdx - startIdx + 1) * step
+						h := durationMin / 60
+						m := durationMin % 60
+						tzOffset := startTime.Format("-07:00")
+						isoTime := startTime.Format("15:04") + tzOffset
+						isoDur := "P"
+						if h > 0 {
+							isoDur += "T" + fmt.Sprintf("%dH", h)
+						}
+						if m > 0 {
+							if h == 0 {
+								isoDur += "T"
+							}
+							isoDur += fmt.Sprintf("%dM", m)
+						}
+						activeBlocks = append(activeBlocks, isoTime+"/"+isoDur)
+						blockStart = i
+					}
+				}
+			}
+			deviceUsage := DeviceUsage{
+				MAC:                normalizedMac,
+				Name:               name,
+				DailyActiveMinutes: dailyActiveMinutes,
+				Active:             activeBlocks,
+			}
+			summary.Devices = append(summary.Devices, deviceUsage)
 
 			numIntervals := 48
 			start := len(rcvMeasurements) - numIntervals

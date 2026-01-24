@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -57,6 +59,32 @@ func runWeb(cmd *cobra.Command, args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Start HTTP API server alongside monitor
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			status := state.Get()
+			if err := json.NewEncoder(w).Encode(status); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		})
+
+		addr := ":8080"
+		if port := viper.GetString("web-port"); port != "" {
+			addr = ":" + port
+		}
+		server := &http.Server{Addr: addr, Handler: mux}
+		go func() {
+			<-ctx.Done()
+			_ = server.Close()
+		}()
+		fmt.Printf("[web] API server listening at http://localhost%s/status\n", addr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintln(os.Stderr, "[web] HTTP server error:", err)
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -92,5 +120,4 @@ func runWeb(cmd *cobra.Command, args []string) {
 		case <-time.After(interval):
 		}
 	}
-	// TODO: Future: Launch the HTTP/API server alongside monitor
 }
