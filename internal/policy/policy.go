@@ -98,6 +98,11 @@ func (pm *PolicyManager) getTodayAllowed() int {
 	return 0 // Default if not found
 }
 
+// AllowedToday returns the allowed minutes for today according to the policy.
+func (pm *PolicyManager) AllowedToday() int {
+	return pm.getTodayAllowed()
+}
+
 func dayInRange(day, start, end string) bool {
 	days := []string{"MO", "TU", "WE", "TH", "FR", "SA", "SU"}
 	startIdx, endIdx := -1, -1

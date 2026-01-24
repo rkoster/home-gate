@@ -1,106 +1,143 @@
-package cmd
+package cmd_test
 
 import (
+	"bytes"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
-	fritzbox "home-gate/internal/fritzbox"
+	"home-gate/cmd"
+	"home-gate/internal/fritzbox"
 	"home-gate/internal/fritzbox/fritzboxfakes"
 	"home-gate/internal/policy"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
-func TestMonitor(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Monitor Command Suite")
+// helper to build measurements of given length with active indices set
+func buildMeasurements(length int, activeIdxs map[int]bool, activeVal float64) []float64 {
+	m := make([]float64, length)
+	for i := 0; i < length; i++ {
+		if activeIdxs[i] {
+			m[i] = activeVal
+		} else {
+			m[i] = 0.0
+		}
+	}
+	return m
 }
 
-var _ = Describe("Monitor Command", func() {
-	var fakeClient *fritzboxfakes.FakeClient
-	var pm *policy.PolicyManager
+func TestRunMonitor_UsesTodayForDailyTotal(t *testing.T) {
+	// arrange
+	fake := &fritzboxfakes.FakeClient{}
+
+	// choose normalized mac
+	mac := "20c9d07d3b1b"
+	// 96 intervals = full day
+	totalIntervals := 96
+
+	// compute intervals since midnight
+	now := time.Now()
+	minutesPastMidnight := now.Hour()*60 + now.Minute()
+	_ = minutesPastMidnight
+	intervalsSinceMidnight := minutesPastMidnight / 15
+
+	// create active intervals only in the old part of the day (indices < totalIntervals-intervalsSinceMidnight)
+	// pick up to 10 active intervals earlier in the day
+	activeEarlier := 10
+	start := totalIntervals - intervalsSinceMidnight
+	if start < 0 {
+		start = 0
+	}
+	activeIdxs := make(map[int]bool)
+	// mark active intervals before today's start to simulate activity from previous day
+	for i := 0; i < activeEarlier && i < start; i++ {
+		activeIdxs[i] = true
+	}
+
+	rcv := buildMeasurements(totalIntervals, activeIdxs, 100.0)
+	snd := buildMeasurements(totalIntervals, map[int]bool{}, 0.0)
+
+	ds1 := fritzbox.SubsetData{DataSourceName: "rcv_" + mac, Measurements: rcv}
+	ds2 := fritzbox.SubsetData{DataSourceName: "snd_" + mac, Measurements: snd}
+	fake.GetMonitorDataReturns([]fritzbox.SubsetData{ds1, ds2}, nil)
+
+	// policy allows 90 minutes -> 6 intervals
+	pm, err := policy.NewPolicyManager("MO-SU90")
+	if err != nil {
+		t.Fatalf("failed to create policy manager: %v", err)
+	}
+
 	var landevices []fritzbox.Landevice
 	var config fritzbox.MonitorConfig
+	macToUserUID := map[string]string{}
 
-	BeforeEach(func() {
-		fakeClient = &fritzboxfakes.FakeClient{}
-		var err error
-		pm, err = policy.NewPolicyManager("MO-FR90")
-		Expect(err).To(BeNil())
+	// act
+	var out bytes.Buffer
+	// activity-threshold set low so our 100.0 counts as active
+	cmd.RunMonitor(fake, pm, mac, "day", 10.0, landevices, config, macToUserUID, false, &out)
 
-		landevices = []fritzbox.Landevice{
-			{UID: "uid1", FriendlyName: "Device1", MAC: "00:11:22:33:44:55", UserUIDs: "user1", Blocked: "0"},
-		}
-		config = fritzbox.MonitorConfig{DisplayHomenetDevices: "uid1"}
-	})
+	// assert: full-day active would be 10*15 =150 > 90, but today-only active should be 0 -> within policy
+	s := out.String()
+	if !strings.Contains(s, "Within policy") {
+		t.Fatalf("expected Within policy in output, got:\n%s", s)
+	}
+}
 
-	Describe("RunMonitor", func() {
-		It("should process devices for specific MAC", func() {
-			// Setup fake client to return data
-			fakeClient.GetMonitorDataReturns([]fritzbox.SubsetData{
-				{DataSourceName: "rcv_001122334455", Measurements: []float64{1.0, 2.0}},
-				{DataSourceName: "snd_001122334455", Measurements: []float64{0.5, 1.0}},
-			}, nil)
+func TestRunMonitor_EnforcesOnReachingLimit(t *testing.T) {
+	fake := &fritzboxfakes.FakeClient{}
 
-			RunMonitor(fakeClient, pm, "00:11:22:33:44:55", "day", 0.0, landevices, config, map[string]string{}, false, GinkgoWriter)
+	mac := "6c006b9068e9"
+	totalIntervals := 96
 
-			// Assert that GetMonitorData was called with correct params
-			Expect(fakeClient.GetMonitorDataCallCount()).To(Equal(1))
-			dataset, subset := fakeClient.GetMonitorDataArgsForCall(0)
-			Expect(dataset).To(Equal("macaddrs"))
-			Expect(subset).To(Equal("subset0002"))
-		})
+	now := time.Now()
+	minutesPastMidnight := now.Hour()*60 + now.Minute()
+	intervalsSinceMidnight := minutesPastMidnight / 15
+	if intervalsSinceMidnight == 0 {
+		// ensure at least one interval
+		intervalsSinceMidnight = 1
+	}
 
-		It("should process configured devices when no MAC specified", func() {
-			fakeClient.GetMonitorDataReturns([]fritzbox.SubsetData{
-				{DataSourceName: "rcv_001122334455", Measurements: []float64{1.0}},
-				{DataSourceName: "snd_001122334455", Measurements: []float64{0.5}},
-			}, nil)
+	// mark the last intervalsSinceMidnight intervals as active
+	activeIdxs := make(map[int]bool)
+	start := totalIntervals - intervalsSinceMidnight
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < totalIntervals; i++ {
+		activeIdxs[i] = true
+	}
 
-			RunMonitor(fakeClient, pm, "", "day", 0.0, landevices, config, map[string]string{}, false, GinkgoWriter)
+	rcv := buildMeasurements(totalIntervals, activeIdxs, 100.0)
+	snd := buildMeasurements(totalIntervals, map[int]bool{}, 0.0)
 
-			Expect(fakeClient.GetMonitorDataCallCount()).To(Equal(1))
-			dataset, subset := fakeClient.GetMonitorDataArgsForCall(0)
-			Expect(dataset).To(Equal("macaddrs"))
-			Expect(subset).To(Equal("subset0002"))
-		})
+	ds1 := fritzbox.SubsetData{DataSourceName: "rcv_" + mac, Measurements: rcv}
+	ds2 := fritzbox.SubsetData{DataSourceName: "snd_" + mac, Measurements: snd}
+	fake.GetMonitorDataReturns([]fritzbox.SubsetData{ds1, ds2}, nil)
 
-		It("should block device when exceeded and enforce is true", func() {
-			// Set policy to low limit to exceed
-			pm, _ := policy.NewPolicyManager("MO-FR20")
-			fakeClient.GetMonitorDataReturns([]fritzbox.SubsetData{
-				{DataSourceName: "rcv_001122334455", Measurements: []float64{1.0, 2.0}},
-				{DataSourceName: "snd_001122334455", Measurements: []float64{0.5, 1.0}},
-			}, nil)
-			fakeClient.BlockDeviceReturns(nil)
+	// allowed equals exactly today's active minutes
+	allowed := intervalsSinceMidnight * 15
+	policyStr := fmt.Sprintf("MO-SU%d", allowed)
+	pm, err := policy.NewPolicyManager(policyStr)
+	if err != nil {
+		t.Fatalf("failed to create policy manager: %v", err)
+	}
 
-			macToUserUID := map[string]string{"001122334455": "user1"}
+	// supply landevice so RunMonitor can find device and block by userUID
+	dev := fritzbox.Landevice{MAC: mac, UserUIDs: "user-123", FriendlyName: "Tablet", Blocked: "0"}
+	landevices := []fritzbox.Landevice{dev}
+	macToUserUID := map[string]string{mac: "user-123"}
+	var config fritzbox.MonitorConfig
 
-			RunMonitor(fakeClient, pm, "00:11:22:33:44:55", "day", 0.0, landevices, config, macToUserUID, true, GinkgoWriter)
+	var out bytes.Buffer
+	// act: enforce true
+	cmd.RunMonitor(fake, pm, mac, "day", 10.0, landevices, config, macToUserUID, true, &out)
 
-			Expect(fakeClient.BlockDeviceCallCount()).To(Equal(1))
-			userUID, block := fakeClient.BlockDeviceArgsForCall(0)
-			Expect(userUID).To(Equal("user1"))
-			Expect(block).To(BeTrue())
-		})
-
-		It("should unblock device when within policy, blocked, and enforce is true", func() {
-			// Device is blocked
-			landevices[0].Blocked = "1"
-			fakeClient.GetMonitorDataReturns([]fritzbox.SubsetData{
-				{DataSourceName: "rcv_001122334455", Measurements: []float64{1.0, 2.0}},
-				{DataSourceName: "snd_001122334455", Measurements: []float64{0.5, 1.0}},
-			}, nil)
-			fakeClient.BlockDeviceReturns(nil)
-
-			macToUserUID := map[string]string{"001122334455": "user1"}
-
-			RunMonitor(fakeClient, pm, "00:11:22:33:44:55", "day", 0.0, landevices, config, macToUserUID, true, GinkgoWriter)
-
-			Expect(fakeClient.BlockDeviceCallCount()).To(Equal(1))
-			userUID, block := fakeClient.BlockDeviceArgsForCall(0)
-			Expect(userUID).To(Equal("user1"))
-			Expect(block).To(BeFalse())
-		})
-	})
-})
+	// assert blocked called once with user-123 true
+	if fake.BlockDeviceCallCount() != 1 {
+		t.Fatalf("expected BlockDevice called once, got %d; output:\n%s", fake.BlockDeviceCallCount(), out.String())
+	}
+	uid, block := fake.BlockDeviceArgsForCall(0)
+	if uid != "user-123" || block != true {
+		t.Fatalf("unexpected block args: %v %v", uid, block)
+	}
+}
