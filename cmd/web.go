@@ -11,11 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"home-gate/internal/monitor"
-	"home-gate/internal/state"
-
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"home-gate/internal/monitor"
+	"home-gate/internal/state"
+	"home-gate/web"
 )
 
 // webCmd is the top-level command for web-related operations (monitoring, api, SPA, etc.)
@@ -49,6 +49,8 @@ func init() {
 	_ = viper.BindEnv("password", "FRITZBOX_PASSWORD")
 }
 
+// Static files are now embedded via the web package.
+
 func runWeb(cmd *cobra.Command, args []string) {
 	_ = viper.BindPFlags(cmd.Flags()) // Re-bind to ensure flag values are correct
 	interval := viper.GetDuration("interval")
@@ -71,6 +73,31 @@ func runWeb(cmd *cobra.Command, args []string) {
 			}
 		})
 
+		// Serve frontend static files and SPA fallback
+		fileServer := http.FS(web.Assets)
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			// skip API route
+			if r.URL.Path == "/status" {
+				return
+			}
+			// Try to serve static file
+			f, err := web.Assets.Open(r.URL.Path[1:])
+			if err == nil {
+				f.Close()
+				http.FileServer(fileServer).ServeHTTP(w, r)
+				return
+			}
+			// Fallback to index.html for SPA routing
+			index, err := web.Assets.Open("index.html")
+			if err != nil {
+				http.Error(w, "index.html not found", http.StatusNotFound)
+				return
+			}
+			defer index.Close()
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			io.Copy(w, index)
+		})
+
 		addr := ":8080"
 		if port := viper.GetString("web-port"); port != "" {
 			addr = ":" + port
@@ -80,7 +107,7 @@ func runWeb(cmd *cobra.Command, args []string) {
 			<-ctx.Done()
 			_ = server.Close()
 		}()
-		fmt.Printf("[web] API server listening at http://localhost%s/status\n", addr)
+		fmt.Printf("[web] API server listening at http://localhost%s/\n", addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintln(os.Stderr, "[web] HTTP server error:", err)
 		}
