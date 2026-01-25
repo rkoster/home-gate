@@ -83,7 +83,9 @@ func runWeb(cmd *cobra.Command, args []string) {
 			// Try to serve static file
 			f, err := web.Assets.Open(r.URL.Path[1:])
 			if err == nil {
-				f.Close()
+				if err := f.Close(); err != nil {
+					fmt.Fprintln(os.Stderr, "[web] error closing file:", err)
+				}
 				http.FileServer(fileServer).ServeHTTP(w, r)
 				return
 			}
@@ -93,9 +95,15 @@ func runWeb(cmd *cobra.Command, args []string) {
 				http.Error(w, "index.html not found", http.StatusNotFound)
 				return
 			}
-			defer index.Close()
+			defer func() {
+				if err := index.Close(); err != nil {
+					fmt.Fprintln(os.Stderr, "[web] error closing index.html:", err)
+				}
+			}()
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			io.Copy(w, index)
+			if _, err := io.Copy(w, index); err != nil {
+				fmt.Fprintln(os.Stderr, "[web] error copying index.html:", err)
+			}
 		})
 
 		addr := ":8080"
