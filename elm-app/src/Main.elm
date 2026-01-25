@@ -162,8 +162,7 @@ view model =
             Nothing ->
                 [ h2 [ Html.Attributes.class "title is-2" ] [ text "Loading…" ] ]
             Just status ->
-                [ h2 [ Html.Attributes.class "title is-2" ] [ text "Device Timelines" ]
-                , devicesListView status.devices (currentInterval model.zone model.now) model.hoveredTimelineBox model.hoveredHourCard identity
+                [ devicesListView status.devices (currentInterval model.zone model.now) model.hoveredTimelineBox model.hoveredHourCard identity
                 ]
     )
 
@@ -184,18 +183,18 @@ hourMarkerView idx =
     else
         div [ style "width" "8px" ] []
 
-hourContainerView : String -> Int -> List (Int, Bool) -> Int -> Maybe (String, Int) -> Maybe (String, Int) -> (Msg -> msg) -> Html msg
+hourContainerView : String -> Int -> List (Int, Bool, Bool) -> Int -> Maybe (String, Int) -> Maybe (String, Int) -> (Msg -> msg) -> Html msg
 hourContainerView deviceName h timeline currSeg hoveredTimelineBox hoveredHourCard liftMsg =
     let
         startIdx = h * 4
         segmentViews =
             List.map (\i ->
                 let
-                    (_, isA) = List.Extra.getAt i timeline |> Maybe.withDefault (i, False)
+                    (idx, isA, isOverQ) = List.Extra.getAt i timeline |> Maybe.withDefault (i, False, False)
                     isCurrent = (i == currSeg)
                     isHovered = hoveredTimelineBox == Just (deviceName, i)
                 in
-                timelineBoxView deviceName i isA isCurrent isHovered liftMsg
+                timelineBoxView deviceName i isA isCurrent isHovered isOverQ liftMsg
             ) (List.range startIdx (startIdx + 3))
         isHourHovered = hoveredHourCard == Just (deviceName, h)
         hourBoxBg = if isHourHovered then "rgba(248,250,252,0.92)" else "rgba(248,250,252,0.80)" -- Tailwind bg-slate-50/50 hover:bg-slate-50/90
@@ -233,8 +232,9 @@ hourContainerView deviceName h timeline currSeg hoveredTimelineBox hoveredHourCa
 deviceTimelineView : Device -> Int -> Maybe (String, Int) -> Maybe (String, Int) -> (Msg -> msg) -> Html msg
 deviceTimelineView device currSeg hoveredTimelineBox hoveredHourCard liftMsg =
     let
-        timeline = makeTimeline device.activeSlots
+        timeline = makeTimeline device.activeSlots device.quota
         name = device.name
+        isOverQuota = device.quota > 0 && device.dailyActiveMinutes > device.quota
     in
     div [ Html.Attributes.class "box" ]
         [ h2 [ Html.Attributes.class "title is-4" ] [ text device.name ]
@@ -246,8 +246,8 @@ deviceTimelineView device currSeg hoveredTimelineBox hoveredHourCard liftMsg =
             (List.map (\h -> hourContainerView name h timeline currSeg hoveredTimelineBox hoveredHourCard liftMsg) (List.range 6 21))
         ]
 
-timelineBoxView : String -> Int -> Bool -> Bool -> Bool -> (Msg -> msg) -> Html msg
-timelineBoxView deviceName idx isActive isCurrent isHovered liftMsg =
+timelineBoxView : String -> Int -> Bool -> Bool -> Bool -> Bool -> (Msg -> msg) -> Html msg
+timelineBoxView deviceName idx isActive isCurrent isHovered isOverQuota liftMsg =
     let
         (tStart, tEnd) = intervalToTimes idx
         statusStr = if isActive then "Active" else "Inactive"
@@ -267,7 +267,8 @@ timelineBoxView deviceName idx isActive isCurrent isHovered liftMsg =
                , style "border-radius" "4px"
                , style "background-color" (
                     if isActive then
-                        if isHovered then "#34d399" else "#10b981"
+                        if isOverQuota then (if isHovered then "#ef4444" else "#dc2626")
+                        else if isHovered then "#34d399" else "#10b981"
                     else
                         if isHovered then "#d1d5db" else "#e5e7eb"
                  )
@@ -292,7 +293,7 @@ timelineBoxView deviceName idx isActive isCurrent isHovered liftMsg =
     span
         ([ onMouseEnter (liftMsg (TimelineBoxHovered deviceName idx True))
          , onMouseLeave (liftMsg (TimelineBoxHovered deviceName idx False))
-         ]
+        ]
         ++ baseStyles
         )
         [ if isHovered then
@@ -328,14 +329,26 @@ intervalToTimes idx =
     in
     (tStart, tEnd)
 
-makeTimeline : List String -> List (Int, Bool)
-makeTimeline activeSlots =
+makeTimeline : List String -> Int -> List (Int, Bool, Bool)
+makeTimeline activeSlots quota =
     let
         all = List.repeat intervalsPerDay False
         marks = List.filterMap parseSlot activeSlots
         activeArray = List.foldl applyMarkRange all marks
+        -- Each slot: (interval_idx, isActive, isOverQuotaActive)
+        foldActive (idx, isActive) (accum, result) =
+            if not isActive then
+                (accum, (idx, False, False) :: result)
+            else
+                let
+                    isOver = quota > 0 && accum >= quota
+                    nextAccum = accum + intervalMinutes
+                in
+                    (nextAccum, (idx, True, isOver) :: result)
+        (_, withOverQuotaReversed) =
+            List.foldl foldActive (0, []) (List.indexedMap (\i b -> (i, b)) activeArray)
     in
-    List.indexedMap (\i b -> (i, b)) activeArray
+        List.reverse withOverQuotaReversed
 
 
 parseSlot : String -> Maybe (Int, Int)

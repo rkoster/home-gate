@@ -6776,8 +6776,8 @@ var $author$project$Main$intervalToTimes = function (idx) {
 	var tStart = pad(hour) + (':' + pad(minute));
 	return _Utils_Tuple2(tStart, tEnd);
 };
-var $author$project$Main$timelineBoxView = F6(
-	function (deviceName, idx, isActive, isCurrent, isHovered, liftMsg) {
+var $author$project$Main$timelineBoxView = F7(
+	function (deviceName, idx, isActive, isCurrent, isHovered, isOverQuota, liftMsg) {
 		var statusStr = isActive ? 'Active' : 'Inactive';
 		var baseStyles = _Utils_ap(
 			_List_fromArray(
@@ -6800,7 +6800,7 @@ var $author$project$Main$timelineBoxView = F6(
 						A2(
 						$elm$html$Html$Attributes$style,
 						'background-color',
-						isActive ? (isHovered ? '#34d399' : '#10b981') : (isHovered ? '#d1d5db' : '#e5e7eb')),
+						isActive ? (isOverQuota ? (isHovered ? '#ef4444' : '#dc2626') : (isHovered ? '#34d399' : '#10b981')) : (isHovered ? '#d1d5db' : '#e5e7eb')),
 						A2($elm$html$Html$Attributes$style, 'transition', 'transform 0.17s cubic-bezier(.25,.8,.50,1), box-shadow 0.17s cubic-bezier(.25,.8,.50,1), background-color 0.12s cubic-bezier(.25,.8,.50,1)'),
 						A2(
 						$elm$html$Html$Attributes$style,
@@ -6863,8 +6863,8 @@ var $elm$core$Maybe$withDefault = F2(
 			return _default;
 		}
 	});
-var $author$project$Main$hourContainerView = F7(
-	function (deviceName, h, timeline, currSeg, hoveredTimelineBox, hoveredHourCard, liftMsg) {
+var $author$project$Main$hourContainerView = F8(
+	function (deviceName, h, timeline, currSeg, hoveredTimelineBox, hoveredHourCard, isOverQuota, liftMsg) {
 		var startIdx = h * 4;
 		var segmentViews = A2(
 			$elm$core$List$map,
@@ -6879,7 +6879,7 @@ var $author$project$Main$hourContainerView = F7(
 					_Utils_Tuple2(i, false),
 					A2($elm_community$list_extra$List$Extra$getAt, i, timeline));
 				var isA = _v0.b;
-				return A6($author$project$Main$timelineBoxView, deviceName, i, isA, isCurrent, isHovered, liftMsg);
+				return A7($author$project$Main$timelineBoxView, deviceName, i, isA, isCurrent, isHovered, isOverQuota, liftMsg);
 			},
 			A2($elm$core$List$range, startIdx, startIdx + 3));
 		var isHourHovered = _Utils_eq(
@@ -7132,6 +7132,7 @@ var $author$project$Main$deviceTimelineView = F5(
 	function (device, currSeg, hoveredTimelineBox, hoveredHourCard, liftMsg) {
 		var timeline = $author$project$Main$makeTimeline(device.activeSlots);
 		var name = device.name;
+		var isOverQuota = (device.quota > 0) && (_Utils_cmp(device.dailyActiveMinutes, device.quota) > 0);
 		return A2(
 			$elm$html$Html$div,
 			_List_fromArray(
@@ -7179,7 +7180,7 @@ var $author$project$Main$deviceTimelineView = F5(
 					A2(
 						$elm$core$List$map,
 						function (h) {
-							return A7($author$project$Main$hourContainerView, name, h, timeline, currSeg, hoveredTimelineBox, hoveredHourCard, liftMsg);
+							return A8($author$project$Main$hourContainerView, name, h, timeline, currSeg, hoveredTimelineBox, hoveredHourCard, isOverQuota, liftMsg);
 						},
 						A2($elm$core$List$range, 6, 21)))
 				]));
