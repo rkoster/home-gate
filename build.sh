@@ -38,6 +38,6 @@ go clean -cache -modcache
 # 4. Build Go binary (with embed) from project root
 cd "$(dirname "$0")"
 echo "[build.sh] Building Go binary and embedding web assets..."
-go build -o home-gate ./main.go
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -trimpath -ldflags='-s -w' -o home-gate ./main.go
 
 echo "[build.sh] Build complete! Elm and Go web assets embedded."

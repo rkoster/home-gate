@@ -69,7 +69,23 @@ Enforce policy (weekdays 90 min, weekends 180 min):
 
 ### Using Docker
 
-Run with environment variables:
+#### Real-World Example: Run as a Persistent Service
+
+```bash
+docker run --name home-gate \
+  -e FRITZBOX_USERNAME=admin \
+  -e FRITZBOX_PASSWORD="${FZBPW}" \
+  --publish 8080:8080 \
+  --restart always \
+  ghcr.io/rkoster/home-gate:latest \
+  monitor --period day --policy "MO-TH90FR120SA-SU180" --enforce --activity-threshold=10
+```
+- Replace `${FZBPW}` with your Fritz!Box password variable or string.
+- `--publish 8080:8080` exposes the web UI/API on port 8080.
+- `--restart always` restarts container automatically if it stops.
+- `monitor --period day ...` are arguments to home-gate, not Docker.
+
+Run with environment variables for simple one-offs:
 
 ```bash
 docker run --rm \
@@ -79,7 +95,7 @@ docker run --rm \
   monitor --policy "MO-FR90SA-SU180" --enforce
 ```
 
-Or with flags:
+Or with CLI flags:
 
 ```bash
 docker run --rm \

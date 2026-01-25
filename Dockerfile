@@ -33,7 +33,6 @@ WORKDIR /root/
 
 # Copy the binary and web assets from builder stage
 COPY --from=builder /app/home-gate .
-COPY --from=builder /app/web ./web
 
 ENTRYPOINT ["./home-gate"]
 CMD ["monitor"]
