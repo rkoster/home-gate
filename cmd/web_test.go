@@ -18,6 +18,7 @@ func TestWebStatusEndpoint_ReturnsLatestMonitorState(t *testing.T) {
 		Name:               "iPad",
 		DailyActiveMinutes: 45,
 		Active:             []string{"10:00+02:00/PT45M", "14:15+02:00/PT1H"},
+		QuotaMinutes:       60, // dummy quota for test
 	}
 	summary := monitor.Summary{
 		DevicesChecked: 3,
@@ -69,6 +70,9 @@ func TestWebStatusEndpoint_ReturnsLatestMonitorState(t *testing.T) {
 	}
 	if len(actual.Active) != len(dev.Active) {
 		t.Fatalf("expected %d active blocks got %d", len(dev.Active), len(actual.Active))
+	}
+	if actual.QuotaMinutes != dev.QuotaMinutes {
+		t.Errorf("expected quota_minutes %d got %d", dev.QuotaMinutes, actual.QuotaMinutes)
 	}
 	for i, v := range dev.Active {
 		if actual.Active[i] != v {

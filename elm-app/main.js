@@ -4553,7 +4553,53 @@ function _Http_track(router, xhr, tracker)
 			size: event.lengthComputable ? $elm$core$Maybe$Just(event.total) : $elm$core$Maybe$Nothing
 		}))));
 	});
-}var $elm$core$Basics$EQ = {$: 'EQ'};
+}
+
+
+function _Time_now(millisToPosix)
+{
+	return _Scheduler_binding(function(callback)
+	{
+		callback(_Scheduler_succeed(millisToPosix(Date.now())));
+	});
+}
+
+var _Time_setInterval = F2(function(interval, task)
+{
+	return _Scheduler_binding(function(callback)
+	{
+		var id = setInterval(function() { _Scheduler_rawSpawn(task); }, interval);
+		return function() { clearInterval(id); };
+	});
+});
+
+function _Time_here()
+{
+	return _Scheduler_binding(function(callback)
+	{
+		callback(_Scheduler_succeed(
+			A2($elm$time$Time$customZone, -(new Date().getTimezoneOffset()), _List_Nil)
+		));
+	});
+}
+
+
+function _Time_getZoneName()
+{
+	return _Scheduler_binding(function(callback)
+	{
+		try
+		{
+			var name = $elm$time$Time$Name(Intl.DateTimeFormat().resolvedOptions().timeZone);
+		}
+		catch (e)
+		{
+			var name = $elm$time$Time$Offset(new Date().getTimezoneOffset());
+		}
+		callback(_Scheduler_succeed(name));
+	});
+}
+var $elm$core$Basics$EQ = {$: 'EQ'};
 var $elm$core$Basics$GT = {$: 'GT'};
 var $elm$core$Basics$LT = {$: 'LT'};
 var $elm$core$List$cons = _List_cons;
@@ -5342,7 +5388,13 @@ var $elm$core$Task$perform = F2(
 				A2($elm$core$Task$map, toMessage, task)));
 	});
 var $elm$browser$Browser$element = _Browser_element;
-var $author$project$Main$Loading = {$: 'Loading'};
+var $author$project$Main$GotZone = function (a) {
+	return {$: 'GotZone', a: a};
+};
+var $author$project$Main$NowIs = function (a) {
+	return {$: 'NowIs', a: a};
+};
+var $elm$core$Platform$Cmd$batch = _Platform_batch;
 var $author$project$Main$GotStatus = function (a) {
 	return {$: 'GotStatus', a: a};
 };
@@ -6137,17 +6189,17 @@ var $author$project$Main$Status = F3(
 	function (devicesChecked, usersFetched, devices) {
 		return {devices: devices, devicesChecked: devicesChecked, usersFetched: usersFetched};
 	});
-var $author$project$Main$Device = F4(
-	function (mac, name, dailyActiveMinutes, activeSlots) {
-		return {activeSlots: activeSlots, dailyActiveMinutes: dailyActiveMinutes, mac: mac, name: name};
+var $author$project$Main$Device = F5(
+	function (mac, name, dailyActiveMinutes, activeSlots, quota) {
+		return {activeSlots: activeSlots, dailyActiveMinutes: dailyActiveMinutes, mac: mac, name: name, quota: quota};
 	});
 var $elm$json$Json$Decode$field = _Json_decodeField;
 var $elm$json$Json$Decode$int = _Json_decodeInt;
 var $elm$json$Json$Decode$list = _Json_decodeList;
-var $elm$json$Json$Decode$map4 = _Json_map4;
+var $elm$json$Json$Decode$map5 = _Json_map5;
 var $elm$json$Json$Decode$string = _Json_decodeString;
-var $author$project$Main$deviceDecoder = A5(
-	$elm$json$Json$Decode$map4,
+var $author$project$Main$deviceDecoder = A6(
+	$elm$json$Json$Decode$map5,
 	$author$project$Main$Device,
 	A2($elm$json$Json$Decode$field, 'mac', $elm$json$Json$Decode$string),
 	A2($elm$json$Json$Decode$field, 'name', $elm$json$Json$Decode$string),
@@ -6155,7 +6207,8 @@ var $author$project$Main$deviceDecoder = A5(
 	A2(
 		$elm$json$Json$Decode$field,
 		'active',
-		$elm$json$Json$Decode$list($elm$json$Json$Decode$string)));
+		$elm$json$Json$Decode$list($elm$json$Json$Decode$string)),
+	A2($elm$json$Json$Decode$field, 'quota', $elm$json$Json$Decode$int));
 var $elm$json$Json$Decode$map3 = _Json_map3;
 var $author$project$Main$statusDecoder = A4(
 	$elm$json$Json$Decode$map3,
@@ -6172,143 +6225,612 @@ var $author$project$Main$fetchStatus = $elm$http$Http$get(
 		expect: A2($elm$http$Http$expectJson, $author$project$Main$GotStatus, $author$project$Main$statusDecoder),
 		url: $author$project$Main$url
 	});
+var $elm$time$Time$Name = function (a) {
+	return {$: 'Name', a: a};
+};
+var $elm$time$Time$Offset = function (a) {
+	return {$: 'Offset', a: a};
+};
+var $elm$time$Time$Zone = F2(
+	function (a, b) {
+		return {$: 'Zone', a: a, b: b};
+	});
+var $elm$time$Time$customZone = $elm$time$Time$Zone;
+var $elm$time$Time$here = _Time_here(_Utils_Tuple0);
+var $elm$time$Time$Posix = function (a) {
+	return {$: 'Posix', a: a};
+};
+var $elm$time$Time$millisToPosix = $elm$time$Time$Posix;
+var $elm$time$Time$now = _Time_now($elm$time$Time$millisToPosix);
+var $elm$time$Time$utc = A2($elm$time$Time$Zone, 0, _List_Nil);
 var $author$project$Main$init = function (_v0) {
-	return _Utils_Tuple2($author$project$Main$Loading, $author$project$Main$fetchStatus);
+	return _Utils_Tuple2(
+		{
+			now: $elm$time$Time$millisToPosix(0),
+			status: $elm$core$Maybe$Nothing,
+			zone: $elm$time$Time$utc
+		},
+		$elm$core$Platform$Cmd$batch(
+			_List_fromArray(
+				[
+					$author$project$Main$fetchStatus,
+					A2($elm$core$Task$perform, $author$project$Main$NowIs, $elm$time$Time$now),
+					A2($elm$core$Task$perform, $author$project$Main$GotZone, $elm$time$Time$here)
+				])));
 };
 var $elm$core$Platform$Sub$batch = _Platform_batch;
 var $elm$core$Platform$Sub$none = $elm$core$Platform$Sub$batch(_List_Nil);
-var $author$project$Main$Failure = function (a) {
-	return {$: 'Failure', a: a};
-};
-var $author$project$Main$Success = function (a) {
-	return {$: 'Success', a: a};
-};
-var $author$project$Main$httpErrorToString = function (err) {
-	switch (err.$) {
-		case 'BadUrl':
-			var msg = err.a;
-			return 'Bad URL: ' + msg;
-		case 'Timeout':
-			return 'Request timed out';
-		case 'NetworkError':
-			return 'Network error';
-		case 'BadStatus':
-			var status = err.a;
-			return 'Bad status: ' + $elm$core$String$fromInt(status);
-		default:
-			var msg = err.a;
-			return 'Bad body: ' + msg;
-	}
-};
-var $elm$core$Platform$Cmd$batch = _Platform_batch;
 var $elm$core$Platform$Cmd$none = $elm$core$Platform$Cmd$batch(_List_Nil);
 var $author$project$Main$update = F2(
 	function (msg, model) {
-		var result = msg.a;
-		if (result.$ === 'Ok') {
-			var status = result.a;
-			return _Utils_Tuple2(
-				$author$project$Main$Success(status),
-				$elm$core$Platform$Cmd$none);
-		} else {
-			var err = result.a;
-			return _Utils_Tuple2(
-				$author$project$Main$Failure(
-					$author$project$Main$httpErrorToString(err)),
-				$elm$core$Platform$Cmd$none);
+		switch (msg.$) {
+			case 'GotStatus':
+				var result = msg.a;
+				if (result.$ === 'Ok') {
+					var status = result.a;
+					return _Utils_Tuple2(
+						_Utils_update(
+							model,
+							{
+								status: $elm$core$Maybe$Just(status)
+							}),
+						$elm$core$Platform$Cmd$none);
+				} else {
+					var err = result.a;
+					return _Utils_Tuple2(
+						_Utils_update(
+							model,
+							{status: $elm$core$Maybe$Nothing}),
+						$elm$core$Platform$Cmd$none);
+				}
+			case 'NowIs':
+				var newNow = msg.a;
+				return _Utils_Tuple2(
+					_Utils_update(
+						model,
+						{now: newNow}),
+					$elm$core$Platform$Cmd$none);
+			default:
+				var z = msg.a;
+				return _Utils_Tuple2(
+					_Utils_update(
+						model,
+						{zone: z}),
+					$elm$core$Platform$Cmd$none);
 		}
+	});
+var $elm$json$Json$Encode$string = _Json_wrap;
+var $elm$html$Html$Attributes$stringProperty = F2(
+	function (key, string) {
+		return A2(
+			_VirtualDom_property,
+			key,
+			$elm$json$Json$Encode$string(string));
+	});
+var $elm$html$Html$Attributes$class = $elm$html$Html$Attributes$stringProperty('className');
+var $surprisetalk$elm_bulma$Bulma$Classes$container = $elm$html$Html$Attributes$class('container');
+var $elm$virtual_dom$VirtualDom$node = function (tag) {
+	return _VirtualDom_node(
+		_VirtualDom_noScript(tag));
+};
+var $elm$html$Html$node = $elm$virtual_dom$VirtualDom$node;
+var $surprisetalk$elm_bulma$Helpers$node = F3(
+	function (tag, attrs_, attrs) {
+		return A2(
+			$elm$html$Html$node,
+			tag,
+			_Utils_ap(attrs, attrs_));
+	});
+var $surprisetalk$elm_bulma$Bulma$Layout$container = A2(
+	$surprisetalk$elm_bulma$Helpers$node,
+	'div',
+	_List_fromArray(
+		[$surprisetalk$elm_bulma$Bulma$Classes$container]));
+var $author$project$Main$intervalMinutes = 15;
+var $elm$time$Time$flooredDiv = F2(
+	function (numerator, denominator) {
+		return $elm$core$Basics$floor(numerator / denominator);
+	});
+var $elm$core$Basics$modBy = _Basics_modBy;
+var $elm$time$Time$posixToMillis = function (_v0) {
+	var millis = _v0.a;
+	return millis;
+};
+var $elm$time$Time$toAdjustedMinutesHelp = F3(
+	function (defaultOffset, posixMinutes, eras) {
+		toAdjustedMinutesHelp:
+		while (true) {
+			if (!eras.b) {
+				return posixMinutes + defaultOffset;
+			} else {
+				var era = eras.a;
+				var olderEras = eras.b;
+				if (_Utils_cmp(era.start, posixMinutes) < 0) {
+					return posixMinutes + era.offset;
+				} else {
+					var $temp$defaultOffset = defaultOffset,
+						$temp$posixMinutes = posixMinutes,
+						$temp$eras = olderEras;
+					defaultOffset = $temp$defaultOffset;
+					posixMinutes = $temp$posixMinutes;
+					eras = $temp$eras;
+					continue toAdjustedMinutesHelp;
+				}
+			}
+		}
+	});
+var $elm$time$Time$toAdjustedMinutes = F2(
+	function (_v0, time) {
+		var defaultOffset = _v0.a;
+		var eras = _v0.b;
+		return A3(
+			$elm$time$Time$toAdjustedMinutesHelp,
+			defaultOffset,
+			A2(
+				$elm$time$Time$flooredDiv,
+				$elm$time$Time$posixToMillis(time),
+				60000),
+			eras);
+	});
+var $elm$time$Time$toHour = F2(
+	function (zone, time) {
+		return A2(
+			$elm$core$Basics$modBy,
+			24,
+			A2(
+				$elm$time$Time$flooredDiv,
+				A2($elm$time$Time$toAdjustedMinutes, zone, time),
+				60));
+	});
+var $elm$time$Time$toMinute = F2(
+	function (zone, time) {
+		return A2(
+			$elm$core$Basics$modBy,
+			60,
+			A2($elm$time$Time$toAdjustedMinutes, zone, time));
+	});
+var $author$project$Main$currentInterval = F2(
+	function (zone, now) {
+		var mins = A2($elm$time$Time$toMinute, zone, now);
+		var hours = A2($elm$time$Time$toHour, zone, now);
+		var totalMinutes = (hours * 60) + mins;
+		return (totalMinutes / $author$project$Main$intervalMinutes) | 0;
 	});
 var $elm$html$Html$div = _VirtualDom_node('div');
 var $elm$html$Html$h2 = _VirtualDom_node('h2');
-var $elm$html$Html$li = _VirtualDom_node('li');
-var $elm$virtual_dom$VirtualDom$text = _VirtualDom_text;
-var $elm$html$Html$text = $elm$virtual_dom$VirtualDom$text;
-var $elm$html$Html$ul = _VirtualDom_node('ul');
-var $author$project$Main$deviceTimelineView = function (device) {
-	return A2(
-		$elm$html$Html$li,
-		_List_Nil,
-		_List_fromArray(
-			[
-				A2(
-				$elm$html$Html$h2,
-				_List_Nil,
-				_List_fromArray(
-					[
-						$elm$html$Html$text(device.name)
-					])),
-				A2(
-				$elm$html$Html$div,
-				_List_Nil,
-				_List_fromArray(
-					[
-						$elm$html$Html$text(
-						'Total minutes today: ' + $elm$core$String$fromInt(device.dailyActiveMinutes))
-					])),
-				A2(
-				$elm$html$Html$ul,
-				_List_Nil,
-				A2(
-					$elm$core$List$map,
-					function (slot) {
-						return A2(
-							$elm$html$Html$li,
-							_List_Nil,
-							_List_fromArray(
-								[
-									$elm$html$Html$text(slot)
-								]));
-					},
-					device.activeSlots))
-			]));
+var $elm$core$List$drop = F2(
+	function (n, list) {
+		drop:
+		while (true) {
+			if (n <= 0) {
+				return list;
+			} else {
+				if (!list.b) {
+					return list;
+				} else {
+					var x = list.a;
+					var xs = list.b;
+					var $temp$n = n - 1,
+						$temp$list = xs;
+					n = $temp$n;
+					list = $temp$list;
+					continue drop;
+				}
+			}
+		}
+	});
+var $elm$core$List$head = function (list) {
+	if (list.b) {
+		var x = list.a;
+		var xs = list.b;
+		return $elm$core$Maybe$Just(x);
+	} else {
+		return $elm$core$Maybe$Nothing;
+	}
 };
-var $author$project$Main$devicesListView = function (devices) {
-	return A2(
-		$elm$html$Html$ul,
-		_List_Nil,
-		A2($elm$core$List$map, $author$project$Main$deviceTimelineView, devices));
-};
+var $elm_community$list_extra$List$Extra$getAt = F2(
+	function (idx, xs) {
+		return (idx < 0) ? $elm$core$Maybe$Nothing : $elm$core$List$head(
+			A2($elm$core$List$drop, idx, xs));
+	});
+var $elm$html$Html$span = _VirtualDom_node('span');
 var $elm$virtual_dom$VirtualDom$style = _VirtualDom_style;
 var $elm$html$Html$Attributes$style = $elm$virtual_dom$VirtualDom$style;
-var $author$project$Main$view = function (model) {
-	switch (model.$) {
-		case 'Loading':
-			return A2(
-				$elm$html$Html$div,
-				_List_Nil,
+var $elm$virtual_dom$VirtualDom$text = _VirtualDom_text;
+var $elm$html$Html$text = $elm$virtual_dom$VirtualDom$text;
+var $author$project$Main$intervalToTimes = function (idx) {
+	var pad = function (n) {
+		return (n < 10) ? ('0' + $elm$core$String$fromInt(n)) : $elm$core$String$fromInt(n);
+	};
+	var minutes = idx * $author$project$Main$intervalMinutes;
+	var nextMinutes = minutes + $author$project$Main$intervalMinutes;
+	var nextHour = (nextMinutes / 60) | 0;
+	var nextMinute = A2($elm$core$Basics$modBy, 60, nextMinutes);
+	var tEnd = pad(nextHour) + (':' + pad(nextMinute));
+	var minute = A2($elm$core$Basics$modBy, 60, minutes);
+	var hour = (minutes / 60) | 0;
+	var tStart = pad(hour) + (':' + pad(minute));
+	return _Utils_Tuple2(tStart, tEnd);
+};
+var $elm$html$Html$Attributes$title = $elm$html$Html$Attributes$stringProperty('title');
+var $author$project$Main$timelineBoxView = F3(
+	function (idx, isActive, isCurrent) {
+		var styleList = isCurrent ? _List_fromArray(
+			[
+				A2($elm$html$Html$Attributes$style, 'display', 'inline-block'),
+				A2($elm$html$Html$Attributes$style, 'width', '8px'),
+				A2($elm$html$Html$Attributes$style, 'height', '16px'),
+				A2($elm$html$Html$Attributes$style, 'margin-right', '1px'),
+				A2(
+				$elm$html$Html$Attributes$style,
+				'background-color',
+				isActive ? '#30c750' : '#bbb'),
+				A2($elm$html$Html$Attributes$style, 'border', '1px solid #242424')
+			]) : _List_fromArray(
+			[
+				A2($elm$html$Html$Attributes$style, 'display', 'inline-block'),
+				A2($elm$html$Html$Attributes$style, 'width', '8px'),
+				A2($elm$html$Html$Attributes$style, 'height', '16px'),
+				A2($elm$html$Html$Attributes$style, 'margin-right', '1px'),
+				A2(
+				$elm$html$Html$Attributes$style,
+				'background-color',
+				isActive ? '#30c750' : '#bbb')
+			]);
+		var statusStr = isActive ? 'Active' : 'Inactive';
+		var _v0 = $author$project$Main$intervalToTimes(idx);
+		var tStart = _v0.a;
+		var tEnd = _v0.b;
+		var tooltip = tStart + ('-' + (tEnd + (' (' + (statusStr + ')'))));
+		return A2(
+			$elm$html$Html$span,
+			_Utils_ap(
+				styleList,
 				_List_fromArray(
 					[
-						$elm$html$Html$text('Loading…')
-					]));
-		case 'Failure':
-			var err = model.a;
-			return A2(
-				$elm$html$Html$div,
-				_List_fromArray(
-					[
-						A2($elm$html$Html$Attributes$style, 'color', 'red')
-					]),
-				_List_fromArray(
-					[
-						$elm$html$Html$text('Error: ' + err)
-					]));
-		default:
-			var status = model.a;
-			return A2(
-				$elm$html$Html$div,
-				_List_Nil,
-				_List_fromArray(
-					[
-						A2(
-						$elm$html$Html$h2,
-						_List_Nil,
-						_List_fromArray(
-							[
-								$elm$html$Html$text('Device Timelines')
-							])),
-						$author$project$Main$devicesListView(status.devices)
-					]));
+						$elm$html$Html$Attributes$title(tooltip)
+					])),
+			_List_Nil);
+	});
+var $elm$core$Maybe$withDefault = F2(
+	function (_default, maybe) {
+		if (maybe.$ === 'Just') {
+			var value = maybe.a;
+			return value;
+		} else {
+			return _default;
+		}
+	});
+var $author$project$Main$hourContainerView = F3(
+	function (h, timeline, currSeg) {
+		var startIdx = h * 4;
+		var segmentViews = A2(
+			$elm$core$List$map,
+			function (i) {
+				var isCurrent = _Utils_eq(i, currSeg);
+				var _v0 = A2(
+					$elm$core$Maybe$withDefault,
+					_Utils_Tuple2(i, false),
+					A2($elm_community$list_extra$List$Extra$getAt, i, timeline));
+				var isA = _v0.b;
+				return A3($author$project$Main$timelineBoxView, i, isA, isCurrent);
+			},
+			A2($elm$core$List$range, startIdx, startIdx + 3));
+		return A2(
+			$elm$html$Html$div,
+			_List_fromArray(
+				[
+					A2($elm$html$Html$Attributes$style, 'display', 'flex'),
+					A2($elm$html$Html$Attributes$style, 'flex-direction', 'column'),
+					A2($elm$html$Html$Attributes$style, 'align-items', 'center'),
+					A2($elm$html$Html$Attributes$style, 'border-left', '2px solid #bbb'),
+					A2($elm$html$Html$Attributes$style, 'width', '40px'),
+					A2($elm$html$Html$Attributes$style, 'padding-left', '0px')
+				]),
+			_List_fromArray(
+				[
+					A2(
+					$elm$html$Html$span,
+					_List_fromArray(
+						[
+							A2($elm$html$Html$Attributes$style, 'color', '#aaa'),
+							A2($elm$html$Html$Attributes$style, 'font-size', '11px'),
+							A2($elm$html$Html$Attributes$style, 'margin-bottom', '2px'),
+							A2($elm$html$Html$Attributes$style, 'align-self', 'flex-start'),
+							A2($elm$html$Html$Attributes$style, 'margin-left', '2px')
+						]),
+					_List_fromArray(
+						[
+							$elm$html$Html$text(
+							$elm$core$String$fromInt(h))
+						])),
+					A2(
+					$elm$html$Html$div,
+					_List_fromArray(
+						[
+							A2($elm$html$Html$Attributes$style, 'display', 'flex')
+						]),
+					segmentViews)
+				]));
+	});
+var $elm$core$Basics$ge = _Utils_ge;
+var $author$project$Main$intervalsPerDay = ((24 * 60) / $author$project$Main$intervalMinutes) | 0;
+var $author$project$Main$mark = F2(
+	function (used, i) {
+		return ((i < 0) || (_Utils_cmp(i, $author$project$Main$intervalsPerDay) > -1)) ? used : A2(
+			$elm$core$List$indexedMap,
+			F2(
+				function (j, b) {
+					return _Utils_eq(j, i) ? true : b;
+				}),
+			used);
+	});
+var $author$project$Main$applyMarkRange = F2(
+	function (_v0, used) {
+		var fromIdx = _v0.a;
+		var count = _v0.b;
+		return A3(
+			$elm$core$List$foldl,
+			F2(
+				function (d, acc) {
+					return A2($author$project$Main$mark, acc, fromIdx + d);
+				}),
+			used,
+			A2($elm$core$List$range, 0, count - 1));
+	});
+var $author$project$Main$parseSlot = function (slotString) {
+	var toIdx = function (time) {
+		var _v8 = A2($elm$core$String$split, ':', time);
+		if (_v8.b && _v8.b.b) {
+			var hourStr = _v8.a;
+			var _v9 = _v8.b;
+			var minAndZone = _v9.a;
+			var _v10 = _Utils_Tuple2(
+				$elm$core$String$toInt(hourStr),
+				$elm$core$String$toInt(
+					A2($elm$core$String$left, 2, minAndZone)));
+			if ((_v10.a.$ === 'Just') && (_v10.b.$ === 'Just')) {
+				var h = _v10.a.a;
+				var m = _v10.b.a;
+				return (((h * 60) + m) / $author$project$Main$intervalMinutes) | 0;
+			} else {
+				return 0;
+			}
+		} else {
+			return 0;
+		}
+	};
+	var timeAndDur = A2($elm$core$String$split, '/', slotString);
+	var parseDuration = function (s) {
+		var get = A2($elm$core$String$dropLeft, 2, s);
+		var _v2 = function () {
+			if (A2($elm$core$String$startsWith, 'PT', s) && A2($elm$core$String$contains, 'H', get)) {
+				var _v3 = A2($elm$core$String$split, 'H', get);
+				if (_v3.b) {
+					if (_v3.b.b) {
+						var hour = _v3.a;
+						var _v4 = _v3.b;
+						var r = _v4.a;
+						return _Utils_Tuple2(
+							$elm$core$String$toInt(hour),
+							r);
+					} else {
+						var hour = _v3.a;
+						return _Utils_Tuple2(
+							$elm$core$String$toInt(hour),
+							'');
+					}
+				} else {
+					return _Utils_Tuple2($elm$core$Maybe$Nothing, '');
+				}
+			} else {
+				return _Utils_Tuple2($elm$core$Maybe$Nothing, get);
+			}
+		}();
+		var dh = _v2.a;
+		var rest = _v2.b;
+		var minPart = A2($elm$core$String$contains, 'M', rest) ? $elm$core$String$toInt(
+			A2(
+				$elm$core$String$left,
+				A2(
+					$elm$core$Maybe$withDefault,
+					0,
+					$elm$core$List$head(
+						A2($elm$core$String$indexes, 'M', rest))),
+				rest)) : $elm$core$Maybe$Nothing;
+		var _v5 = _Utils_Tuple2(dh, minPart);
+		if (_v5.a.$ === 'Just') {
+			if (_v5.b.$ === 'Just') {
+				var h = _v5.a.a;
+				var m = _v5.b.a;
+				return (h * 60) + m;
+			} else {
+				var h = _v5.a.a;
+				var _v6 = _v5.b;
+				return h * 60;
+			}
+		} else {
+			if (_v5.b.$ === 'Just') {
+				var _v7 = _v5.a;
+				var m = _v5.b.a;
+				return m;
+			} else {
+				return 0;
+			}
+		}
+	};
+	if ((timeAndDur.b && timeAndDur.b.b) && (!timeAndDur.b.b.b)) {
+		var start = timeAndDur.a;
+		var _v1 = timeAndDur.b;
+		var dur = _v1.a;
+		var mins = parseDuration(dur);
+		var count = (((mins + $author$project$Main$intervalMinutes) - 1) / $author$project$Main$intervalMinutes) | 0;
+		var baseTime = A2($elm$core$String$left, 5, start);
+		var idx = toIdx(baseTime);
+		return $elm$core$Maybe$Just(
+			_Utils_Tuple2(idx, count));
+	} else {
+		return $elm$core$Maybe$Nothing;
 	}
+};
+var $elm$core$List$repeatHelp = F3(
+	function (result, n, value) {
+		repeatHelp:
+		while (true) {
+			if (n <= 0) {
+				return result;
+			} else {
+				var $temp$result = A2($elm$core$List$cons, value, result),
+					$temp$n = n - 1,
+					$temp$value = value;
+				result = $temp$result;
+				n = $temp$n;
+				value = $temp$value;
+				continue repeatHelp;
+			}
+		}
+	});
+var $elm$core$List$repeat = F2(
+	function (n, value) {
+		return A3($elm$core$List$repeatHelp, _List_Nil, n, value);
+	});
+var $author$project$Main$makeTimeline = function (activeSlots) {
+	var marks = A2($elm$core$List$filterMap, $author$project$Main$parseSlot, activeSlots);
+	var all = A2($elm$core$List$repeat, $author$project$Main$intervalsPerDay, false);
+	var activeArray = A3($elm$core$List$foldl, $author$project$Main$applyMarkRange, all, marks);
+	return A2(
+		$elm$core$List$indexedMap,
+		F2(
+			function (i, b) {
+				return _Utils_Tuple2(i, b);
+			}),
+		activeArray);
+};
+var $author$project$Main$deviceTimelineView = F2(
+	function (device, currSeg) {
+		var timeline = $author$project$Main$makeTimeline(device.activeSlots);
+		return A2(
+			$elm$html$Html$div,
+			_List_fromArray(
+				[
+					$elm$html$Html$Attributes$class('box')
+				]),
+			_List_fromArray(
+				[
+					A2(
+					$elm$html$Html$h2,
+					_List_fromArray(
+						[
+							$elm$html$Html$Attributes$class('title is-4')
+						]),
+					_List_fromArray(
+						[
+							$elm$html$Html$text(device.name)
+						])),
+					A2(
+					$elm$html$Html$div,
+					_List_Nil,
+					_List_fromArray(
+						[
+							$elm$html$Html$text(
+							'Total minutes today: ' + $elm$core$String$fromInt(device.dailyActiveMinutes))
+						])),
+					A2(
+					$elm$html$Html$div,
+					_List_Nil,
+					_List_fromArray(
+						[
+							$elm$html$Html$text(
+							'Quota for today: ' + ($elm$core$String$fromInt(device.quota) + ' min'))
+						])),
+					A2(
+					$elm$html$Html$div,
+					_List_fromArray(
+						[
+							A2($elm$html$Html$Attributes$style, 'display', 'flex'),
+							A2($elm$html$Html$Attributes$style, 'margin', '6px 0')
+						]),
+					A2(
+						$elm$core$List$map,
+						function (h) {
+							return A3($author$project$Main$hourContainerView, h, timeline, currSeg);
+						},
+						A2($elm$core$List$range, 0, 23)))
+				]));
+	});
+var $elm$html$Html$ul = _VirtualDom_node('ul');
+var $author$project$Main$devicesListView = F2(
+	function (devices, currSeg) {
+		return A2(
+			$elm$html$Html$ul,
+			_List_Nil,
+			A2(
+				$elm$core$List$map,
+				function (dev) {
+					return A2($author$project$Main$deviceTimelineView, dev, currSeg);
+				},
+				devices));
+	});
+var $elm$html$Html$Attributes$href = function (url) {
+	return A2(
+		$elm$html$Html$Attributes$stringProperty,
+		'href',
+		_VirtualDom_noJavaScriptUri(url));
+};
+var $elm$html$Html$Attributes$rel = _VirtualDom_attribute('rel');
+var $surprisetalk$elm_bulma$Bulma$CDN$stylesheet = A3(
+	$elm$html$Html$node,
+	'link',
+	_List_fromArray(
+		[
+			$elm$html$Html$Attributes$rel('stylesheet'),
+			$elm$html$Html$Attributes$href('https://cdnjs.cloudflare.com/ajax/libs/bulma/0.7.1/css/bulma.min.css')
+		]),
+	_List_Nil);
+var $author$project$Main$view = function (model) {
+	return A2(
+		$surprisetalk$elm_bulma$Bulma$Layout$container,
+		_List_Nil,
+		A2(
+			$elm$core$List$cons,
+			$surprisetalk$elm_bulma$Bulma$CDN$stylesheet,
+			function () {
+				var _v0 = model.status;
+				if (_v0.$ === 'Nothing') {
+					return _List_fromArray(
+						[
+							A2(
+							$elm$html$Html$h2,
+							_List_fromArray(
+								[
+									$elm$html$Html$Attributes$class('title is-2')
+								]),
+							_List_fromArray(
+								[
+									$elm$html$Html$text('Loading…')
+								]))
+						]);
+				} else {
+					var status = _v0.a;
+					return _List_fromArray(
+						[
+							A2(
+							$elm$html$Html$h2,
+							_List_fromArray(
+								[
+									$elm$html$Html$Attributes$class('title is-2')
+								]),
+							_List_fromArray(
+								[
+									$elm$html$Html$text('Device Timelines')
+								])),
+							A2(
+							$author$project$Main$devicesListView,
+							status.devices,
+							A2($author$project$Main$currentInterval, model.zone, model.now))
+						]);
+				}
+			}()));
 };
 var $author$project$Main$main = $elm$browser$Browser$element(
 	{

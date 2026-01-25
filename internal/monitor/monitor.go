@@ -33,6 +33,7 @@ type DeviceUsage struct {
 	Name               string   `json:"name"`
 	DailyActiveMinutes int      `json:"daily_active_minutes"`
 	Active             []string `json:"active"`
+	QuotaMinutes       int      `json:"quota"`
 }
 
 // Summary holds high-level details about a monitoring run.
@@ -238,14 +239,17 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 			var activeBlocks []string
 			if len(activeIndexes) > 0 {
 				loc := time.Local
-				today := time.Now().In(loc)
 				const step = 15 // minutes
 				blockStart := 0
 				for i := 1; i <= len(activeIndexes); i++ {
 					if i == len(activeIndexes) || activeIndexes[i] != activeIndexes[i-1]+1 {
 						startIdx := activeIndexes[blockStart]
 						endIdx := activeIndexes[i-1]
-						startTime := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc).Add(time.Duration(startIdx*step) * time.Minute)
+						// Use oldest interval as reference (rolling window fix)
+						intervalCount := len(rcvMeasurements)
+						latestIntervalTime := time.Now().In(loc).Truncate(step * time.Minute)
+						oldestIntervalTime := latestIntervalTime.Add(-time.Duration(intervalCount-1) * step * time.Minute)
+						startTime := oldestIntervalTime.Add(time.Duration(startIdx) * step * time.Minute)
 						durationMin := (endIdx - startIdx + 1) * step
 						h := durationMin / 60
 						m := durationMin % 60
@@ -271,6 +275,10 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 				Name:               name,
 				DailyActiveMinutes: dailyActiveMinutes,
 				Active:             activeBlocks,
+				QuotaMinutes:       0, // default to 0, will be set below
+			}
+			if pm != nil {
+				deviceUsage.QuotaMinutes = pm.AllowedToday()
 			}
 			summary.Devices = append(summary.Devices, deviceUsage)
 

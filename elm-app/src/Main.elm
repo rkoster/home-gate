@@ -3,6 +3,8 @@ module Main exposing (main)
 import Browser
 import Html exposing (Html, div, h2, ul, li, text, span)
 import Html.Attributes exposing (style)
+import Time
+import Task
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import List.Extra exposing (getAt)
@@ -35,6 +37,7 @@ type alias Device =
     , name : String
     , dailyActiveMinutes : Int
     , activeSlots : List String
+    , quota : Int
     }
 
 type alias Status =
@@ -43,10 +46,12 @@ type alias Status =
     , devices : List Device
     }
 
-type Model
-    = Loading
-    | Failure String
-    | Success Status
+type alias Model =
+    { status : Maybe Status
+    , now : Time.Posix
+    , zone : Time.Zone
+    }
+
 
 -- INIT & HTTP
 
@@ -56,7 +61,7 @@ url =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( Loading, fetchStatus )
+    ( { status = Nothing, now = Time.millisToPosix 0, zone = Time.utc }, Cmd.batch [ fetchStatus, Time.now |> Task.perform NowIs, Time.here |> Task.perform GotZone ] )
 
 fetchStatus : Cmd Msg
 fetchStatus =
@@ -67,6 +72,8 @@ fetchStatus =
 
 type Msg
     = GotStatus (Result Http.Error Status)
+    | NowIs Time.Posix
+    | GotZone Time.Zone
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -74,9 +81,15 @@ update msg model =
         GotStatus result ->
             case result of
                 Ok status ->
-                    ( Success status, Cmd.none )
+                    ( { model | status = Just status }, Cmd.none )
                 Err err ->
-                    ( Failure (httpErrorToString err), Cmd.none )
+                    ( { model | status = Nothing }, Cmd.none )
+
+        NowIs newNow ->
+            ( { model | now = newNow }, Cmd.none )
+
+        GotZone z ->
+            ( { model | zone = z }, Cmd.none )
 
 httpErrorToString : Http.Error -> String
 httpErrorToString err =
@@ -91,11 +104,12 @@ httpErrorToString err =
 
 deviceDecoder : Decoder Device
 deviceDecoder =
-    Decode.map4 Device
+    Decode.map5 Device
         (Decode.field "mac" Decode.string)
         (Decode.field "name" Decode.string)
         (Decode.field "daily_active_minutes" Decode.int)
         (Decode.field "active" (Decode.list Decode.string))
+        (Decode.field "quota" Decode.int)
 
 statusDecoder : Decoder Status
 statusDecoder =
@@ -106,29 +120,38 @@ statusDecoder =
 
 -- VIEW
 
+minuteMs : Int
+minuteMs = 60 * 1000
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Time.every (toFloat minuteMs) NowIs
+
+currentInterval : Time.Zone -> Time.Posix -> Int
+currentInterval zone now =
+    let
+        hours = Time.toHour zone now
+        mins = Time.toMinute zone now
+        totalMinutes = hours * 60 + mins
+    in
+        totalMinutes // intervalMinutes
+
 view : Model -> Html Msg
 view model =
-    case model of
-        Loading ->
-            container []
-                [ stylesheet
-                , h2 [ Html.Attributes.class "title is-2" ] [ text "Loading…" ]
+    container [] (
+        stylesheet ::
+        case model.status of
+            Nothing ->
+                [ h2 [ Html.Attributes.class "title is-2" ] [ text "Loading…" ] ]
+            Just status ->
+                [ h2 [ Html.Attributes.class "title is-2" ] [ text "Device Timelines" ]
+                 , devicesListView status.devices (currentInterval model.zone model.now)
                 ]
-        Failure err ->
-            container []
-                [ stylesheet
-                , h2 [ Html.Attributes.class "title is-2 has-text-danger" ] [ text ("Error: " ++ err) ]
-                ]
-        Success status ->
-            container []
-                [ stylesheet
-                , h2 [ Html.Attributes.class "title is-2" ] [ text "Device Timelines" ]
-                , devicesListView status.devices
-                ]
+    )
 
-devicesListView : List Device -> Html Msg
-devicesListView devices =
-    ul [] (List.map deviceTimelineView devices)
+devicesListView : List Device -> Int -> Html Msg
+devicesListView devices currSeg =
+    ul [] (List.map (\dev -> deviceTimelineView dev currSeg) devices)
 
 hourMarkerView : Int -> Html msg
 hourMarkerView idx =
@@ -143,16 +166,17 @@ hourMarkerView idx =
     else
         div [ style "width" "8px" ] []
 
-hourContainerView : Int -> List (Int, Bool) -> Html msg
-hourContainerView h timeline =
+hourContainerView : Int -> List (Int, Bool) -> Int -> Html msg
+hourContainerView h timeline currSeg =
     let
         startIdx = h * 4
         segmentViews =
             List.map (\i ->
                 let
                     (_, isA) = List.Extra.getAt i timeline |> Maybe.withDefault (i, False)
+                    isCurrent = (i == currSeg)
                 in
-                timelineBoxView i isA
+                timelineBoxView i isA isCurrent
             ) (List.range startIdx (startIdx + 3))
     in
     div
@@ -167,34 +191,43 @@ hourContainerView h timeline =
         , div [ style "display" "flex" ] segmentViews
         ]
 
-deviceTimelineView : Device -> Html Msg
-deviceTimelineView device =
+deviceTimelineView : Device -> Int -> Html Msg
+deviceTimelineView device currSeg =
     let
         timeline = makeTimeline device.activeSlots
     in
     div [ Html.Attributes.class "box" ]
         [ h2 [ Html.Attributes.class "title is-4" ] [ text device.name ]
         , div [] [ text ("Total minutes today: " ++ String.fromInt device.dailyActiveMinutes) ]
-    , div [ style "display" "flex", style "margin" "6px 0" ]
-        (List.map (\h -> hourContainerView h timeline) (List.range 0 23))
-    ]
+        , div [] [ text ("Quota for today: " ++ String.fromInt device.quota ++ " min") ]
+        , div [ style "display" "flex", style "margin" "6px 0" ]
+            (List.map (\h -> hourContainerView h timeline currSeg) (List.range 0 23))
+        ]
 
-timelineBoxView : Int -> Bool -> Html msg
-timelineBoxView idx isActive =
+timelineBoxView : Int -> Bool -> Bool -> Html msg
+timelineBoxView idx isActive isCurrent =
     let
         (tStart, tEnd) = intervalToTimes idx
         statusStr = if isActive then "Active" else "Inactive"
         tooltip = tStart ++ "-" ++ tEnd ++ " (" ++ statusStr ++ ")"
+        styleList =
+            if isCurrent then
+                [ style "display" "inline-block"
+                , style "width" "8px"
+                , style "height" "16px"
+                , style "margin-right" "1px"
+                , style "background-color" (if isActive then "#30c750" else "#bbb")
+                , style "border" "1px solid #242424"
+                ]
+            else
+                [ style "display" "inline-block"
+                , style "width" "8px"
+                , style "height" "16px"
+                , style "margin-right" "1px"
+                , style "background-color" (if isActive then "#30c750" else "#bbb")
+                ]
     in
-    span
-        [ style "display" "inline-block"
-        , style "width" "8px"
-        , style "height" "16px"
-        , style "margin-right" "1px"
-        , style "background-color" (if isActive then "#30c750" else "#bbb")
-        , Html.Attributes.title tooltip
-        ]
-        []
+    span (styleList ++ [ Html.Attributes.title tooltip ]) []
 
 intervalToTimes : Int -> (String, String)
 intervalToTimes idx =
