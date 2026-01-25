@@ -16,6 +16,9 @@ import Bulma.Layout exposing (container)
 import Bulma.Elements exposing (title)
 import Bulma.CDN exposing (stylesheet)
 
+import DailyQuotaCard
+import ActiveTimeCard
+
 intervalMinutes : Int
 intervalMinutes = 15
 
@@ -235,8 +238,10 @@ deviceTimelineView device currSeg hoveredTimelineBox hoveredHourCard liftMsg =
     in
     div [ Html.Attributes.class "box" ]
         [ h2 [ Html.Attributes.class "title is-4" ] [ text device.name ]
-        , div [] [ text ("Total minutes today: " ++ String.fromInt device.dailyActiveMinutes) ]
-        , div [] [ text ("Quota for today: " ++ String.fromInt device.quota ++ " min") ]
+        , div [ style "display" "grid", style "grid-template-columns" "2fr 1fr", style "gap" "24px", style "margin-bottom" "24px" ]
+            [ DailyQuotaCard.dailyQuotaCard { quota = device.quota, dailyActiveMinutes = device.dailyActiveMinutes }
+            , ActiveTimeCard.activeTimeCard { quota = device.quota, dailyActiveMinutes = device.dailyActiveMinutes }
+            ]
         , div [ style "display" "flex", style "flex-wrap" "wrap", style "gap" "12px", style "justify-content" "flex-start", style "margin" "16px 0 0 0" ]
             (List.map (\h -> hourContainerView name h timeline currSeg hoveredTimelineBox hoveredHourCard liftMsg) (List.range 6 21))
         ]
