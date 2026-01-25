@@ -1,13 +1,16 @@
 module Main exposing (main)
 
 import Browser
-import Html exposing (Html, div, h2, ul, li, text, span)
-import Html.Attributes exposing (style)
+import Html exposing (Html, div, h2, ul, li, text, span, div, Html, Attribute)
+import Html.Attributes exposing (style, class)
+import Html.Events exposing (onMouseEnter, onMouseLeave)
 import Time
 import Task
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import List.Extra exposing (getAt)
+
+import TimelineStyles exposing (intervalBlock, legendActive, legendInactive, tooltip, hourBlock)
 
 import Bulma.Layout exposing (container)
 import Bulma.Elements exposing (title)
@@ -50,6 +53,8 @@ type alias Model =
     { status : Maybe Status
     , now : Time.Posix
     , zone : Time.Zone
+    , hoveredTimelineBox : Maybe (String, Int) -- (DeviceName, TimelineIdx)
+    , hoveredHourCard : Maybe (String, Int) -- (DeviceName, hourIdx)
     }
 
 
@@ -61,7 +66,7 @@ url =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { status = Nothing, now = Time.millisToPosix 0, zone = Time.utc }, Cmd.batch [ fetchStatus, Time.now |> Task.perform NowIs, Time.here |> Task.perform GotZone ] )
+    ( { status = Nothing, now = Time.millisToPosix 0, zone = Time.utc, hoveredTimelineBox = Nothing, hoveredHourCard = Nothing }, Cmd.batch [ fetchStatus, Time.now |> Task.perform NowIs, Time.here |> Task.perform GotZone ] )
 
 fetchStatus : Cmd Msg
 fetchStatus =
@@ -74,6 +79,8 @@ type Msg
     = GotStatus (Result Http.Error Status)
     | NowIs Time.Posix
     | GotZone Time.Zone
+    | TimelineBoxHovered String Int Bool -- deviceName, interval index, hover state
+    | HourCardHovered String Int Bool -- deviceName, hourIdx, hover state
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -90,6 +97,14 @@ update msg model =
 
         GotZone z ->
             ( { model | zone = z }, Cmd.none )
+
+        TimelineBoxHovered dev idx hover ->
+            let newVal = if hover then Just (dev, idx) else Nothing
+            in ({ model | hoveredTimelineBox = newVal }, Cmd.none)
+
+        HourCardHovered dev hour hover ->
+            let newVal = if hover then Just (dev, hour) else Nothing
+            in ({ model | hoveredHourCard = newVal }, Cmd.none)
 
 httpErrorToString : Http.Error -> String
 httpErrorToString err =
@@ -145,13 +160,13 @@ view model =
                 [ h2 [ Html.Attributes.class "title is-2" ] [ text "Loading…" ] ]
             Just status ->
                 [ h2 [ Html.Attributes.class "title is-2" ] [ text "Device Timelines" ]
-                 , devicesListView status.devices (currentInterval model.zone model.now)
+                , devicesListView status.devices (currentInterval model.zone model.now) model.hoveredTimelineBox model.hoveredHourCard identity
                 ]
     )
 
-devicesListView : List Device -> Int -> Html Msg
-devicesListView devices currSeg =
-    ul [] (List.map (\dev -> deviceTimelineView dev currSeg) devices)
+
+devicesListView devices currSeg hoveredTimelineBox hoveredHourCard liftMsg =
+    ul [] (List.map (\dev -> deviceTimelineView dev currSeg hoveredTimelineBox hoveredHourCard liftMsg) devices)
 
 hourMarkerView : Int -> Html msg
 hourMarkerView idx =
@@ -166,8 +181,8 @@ hourMarkerView idx =
     else
         div [ style "width" "8px" ] []
 
-hourContainerView : Int -> List (Int, Bool) -> Int -> Html msg
-hourContainerView h timeline currSeg =
+hourContainerView : String -> Int -> List (Int, Bool) -> Int -> Maybe (String, Int) -> Maybe (String, Int) -> (Msg -> msg) -> Html msg
+hourContainerView deviceName h timeline currSeg hoveredTimelineBox hoveredHourCard liftMsg =
     let
         startIdx = h * 4
         segmentViews =
@@ -175,59 +190,123 @@ hourContainerView h timeline currSeg =
                 let
                     (_, isA) = List.Extra.getAt i timeline |> Maybe.withDefault (i, False)
                     isCurrent = (i == currSeg)
+                    isHovered = hoveredTimelineBox == Just (deviceName, i)
                 in
-                timelineBoxView i isA isCurrent
+                timelineBoxView deviceName i isA isCurrent isHovered liftMsg
             ) (List.range startIdx (startIdx + 3))
+        isHourHovered = hoveredHourCard == Just (deviceName, h)
+        hourBoxBg = if isHourHovered then "rgba(248,250,252,0.92)" else "rgba(248,250,252,0.80)" -- Tailwind bg-slate-50/50 hover:bg-slate-50/90
+        hourBoxBorder = if isHourHovered then "1px solid #e5e7eb" else "1px solid rgba(241,245,249,0.8)" --  border-slate-200 or border-slate-100/50
     in
     div
-        [ style "display" "flex"
-        , style "flex-direction" "column"
-        , style "align-items" "center"
-        , style "border-left" "2px solid #bbb"
-        , style "width" "40px"
-        , style "padding-left" "0px"
+        ([ style "background-color" hourBoxBg
+         , style "border-radius" "12px"
+         , style "box-shadow" "0 2px 12px rgba(17,24,39,0.09)"
+         , style "border" hourBoxBorder
+         , style "display" "flex"
+         , style "flex-direction" "column"
+         , style "align-items" "center"
+         , style "justify-content" "space-between"
+         , style "margin" "0"
+         , style "padding" "12px"
+         , style "transition" "border-color 0.21s cubic-bezier(.25,.8,.50,1), background-color 0.21s cubic-bezier(.25,.8,.50,1)"
+         , onMouseEnter (liftMsg (HourCardHovered deviceName h True))
+         , onMouseLeave (liftMsg (HourCardHovered deviceName h False))
         ]
-        [ span [ style "color" "#aaa", style "font-size" "11px", style "margin-bottom" "2px", style "align-self" "flex-start", style "margin-left" "2px" ] [ text (String.fromInt h) ]
-        , div [ style "display" "flex" ] segmentViews
+        )
+        [ span [ style "color" "#a1a1aa" -- slate-400
+               , style "font-size" "12px"
+               , style "font-weight" "600"
+               , style "margin-bottom" "8px"
+               , style "align-self" "flex-start"
+               ] [ text ((if h < 10 then "0" else "") ++ String.fromInt h ++ ":00") ]
+        , div [ style "display" "flex", style "gap" "4px", style "align-items" "end", style "height" "32px" ] segmentViews
+        , div [ style "display" "flex", style "width" "100%", style "justify-content" "space-between", style "margin-top" "4px", style "padding-left" "1px", style "padding-right" "1px" ]
+             [ span [ style "font-size" "8px", style "color" "#a1a1aa" ] [ text "00" ]
+             , span [ style "font-size" "8px", style "color" "#a1a1aa" ] [ text "60" ]
+             ]
         ]
 
-deviceTimelineView : Device -> Int -> Html Msg
-deviceTimelineView device currSeg =
+deviceTimelineView : Device -> Int -> Maybe (String, Int) -> Maybe (String, Int) -> (Msg -> msg) -> Html msg
+deviceTimelineView device currSeg hoveredTimelineBox hoveredHourCard liftMsg =
     let
         timeline = makeTimeline device.activeSlots
+        name = device.name
     in
     div [ Html.Attributes.class "box" ]
         [ h2 [ Html.Attributes.class "title is-4" ] [ text device.name ]
         , div [] [ text ("Total minutes today: " ++ String.fromInt device.dailyActiveMinutes) ]
         , div [] [ text ("Quota for today: " ++ String.fromInt device.quota ++ " min") ]
-        , div [ style "display" "flex", style "margin" "6px 0" ]
-            (List.map (\h -> hourContainerView h timeline currSeg) (List.range 0 23))
+        , div [ style "display" "flex", style "flex-wrap" "wrap", style "gap" "12px", style "justify-content" "flex-start", style "margin" "16px 0 0 0" ]
+            (List.map (\h -> hourContainerView name h timeline currSeg hoveredTimelineBox hoveredHourCard liftMsg) (List.range 6 21))
         ]
 
-timelineBoxView : Int -> Bool -> Bool -> Html msg
-timelineBoxView idx isActive isCurrent =
+timelineBoxView : String -> Int -> Bool -> Bool -> Bool -> (Msg -> msg) -> Html msg
+timelineBoxView deviceName idx isActive isCurrent isHovered liftMsg =
     let
         (tStart, tEnd) = intervalToTimes idx
         statusStr = if isActive then "Active" else "Inactive"
-        tooltip = tStart ++ "-" ++ tEnd ++ " (" ++ statusStr ++ ")"
-        styleList =
-            if isCurrent then
-                [ style "display" "inline-block"
-                , style "width" "8px"
-                , style "height" "16px"
-                , style "margin-right" "1px"
-                , style "background-color" (if isActive then "#30c750" else "#bbb")
-                , style "border" "1px solid #242424"
-                ]
-            else
-                [ style "display" "inline-block"
-                , style "width" "8px"
-                , style "height" "16px"
-                , style "margin-right" "1px"
-                , style "background-color" (if isActive then "#30c750" else "#bbb")
-                ]
+        tooltipContent = tStart ++ "-" ++ tEnd ++ " (" ++ statusStr ++ ")"
+        baseStyles =
+            [ style "display" "inline-block"
+            , style "vertical-align" "bottom"
+            , style "margin-right" "3px"
+            , style "position" "relative"
+            ]
+            ++ (if isCurrent then
+                    [ style "border" "1px solid #242424" ]
+               else
+                    [])
+            ++ [ style "width" "18px"
+               , style "height" "32px"
+               , style "border-radius" "4px"
+               , style "background-color" (
+                    if isActive then
+                        if isHovered then "#34d399" else "#10b981"
+                    else
+                        if isHovered then "#d1d5db" else "#e5e7eb"
+                 )
+               , style "transition" "transform 0.17s cubic-bezier(.25,.8,.50,1), box-shadow 0.17s cubic-bezier(.25,.8,.50,1), background-color 0.12s cubic-bezier(.25,.8,.50,1)"
+               , style "transform" (
+                     if isHovered then
+                        if isActive then "scaleY(1.12)" else "scaleY(0.90)"
+                     else if isActive then "scaleY(0.90)" else "scaleY(0.75)"
+                 )
+               , style "box-shadow" (
+                    if isActive then
+                        if isHovered then "0 0 14px 0 rgba(16,185,129,0.35)"
+                        else "0 0 8px 0 rgba(16,185,129,0.19)"
+                    else
+                        if isHovered then "0 0 4px 0 #bbbbbb"
+                        else "none"
+                 )
+               , style "cursor" "pointer"
+               ]
+
     in
-    span (styleList ++ [ Html.Attributes.title tooltip ]) []
+    span
+        ([ onMouseEnter (liftMsg (TimelineBoxHovered deviceName idx True))
+         , onMouseLeave (liftMsg (TimelineBoxHovered deviceName idx False))
+         ]
+        ++ baseStyles
+        )
+        [ if isHovered then
+                div [ style "position" "absolute"
+                    , style "bottom" "110%"
+                    , style "left" "50%"
+                    , style "transform" "translateX(-50%)"
+                    , style "background-color" "#111827"
+                    , style "color" "#fff"
+                    , style "font-size" "12px"
+                    , style "padding" "6px 12px"
+                    , style "border-radius" "4px"
+                    , style "white-space" "nowrap"
+                    , style "box-shadow" "0 4px 16px rgba(30,41,59,0.2)"
+                    , style "z-index" "99"
+                    ]
+                    [ text tooltipContent ]
+           else text ""
+        ]
 
 intervalToTimes : Int -> (String, String)
 intervalToTimes idx =
