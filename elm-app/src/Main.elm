@@ -65,7 +65,7 @@ type alias Model =
 
 url : String
 url =
-    "http://localhost:8080/status"
+    "/status"
 
 init : () -> ( Model, Cmd Msg )
 init _ =
