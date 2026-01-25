@@ -3,6 +3,7 @@ home-gate
 
 # Ignore Elm build artifact
 elm-app/elm.min.js
+web/elm.min.js
 
 # Optional: OS, editor, generic patterns
 *.log
