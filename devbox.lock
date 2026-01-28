@@ -1,6 +1,54 @@
 {
   "lockfile_version": "1",
   "packages": {
+    "elmPackages.elm-live@latest": {
+      "last_modified": "2025-12-31T03:27:36Z",
+      "resolved": "github:NixOS/nixpkgs/f665af0cdb70ed27e1bd8f9fdfecaf451260fc55#elmPackages.elm-live",
+      "source": "devbox-search",
+      "version": "4.0.1",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/whcax0fl6b59qmhvg3gvfwr3x9bfmqra-elm-live-4.0.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/whcax0fl6b59qmhvg3gvfwr3x9bfmqra-elm-live-4.0.1"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/znqf6w6r80sm494xg03427kfqp23vw08-elm-live-4.0.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/znqf6w6r80sm494xg03427kfqp23vw08-elm-live-4.0.1"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/afn4h6206j0pbq9f4fb7vg9hg6shbjzv-elm-live-4.0.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/afn4h6206j0pbq9f4fb7vg9hg6shbjzv-elm-live-4.0.1"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/yqhq0hzlrg5kp6l0z5n8yjgk3dxkgvb2-elm-live-4.0.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/yqhq0hzlrg5kp6l0z5n8yjgk3dxkgvb2-elm-live-4.0.1"
+        }
+      }
+    },
     "elmPackages.elm@latest": {
       "last_modified": "2025-12-31T03:27:36Z",
       "resolved": "github:NixOS/nixpkgs/f665af0cdb70ed27e1bd8f9fdfecaf451260fc55#elmPackages.elm",

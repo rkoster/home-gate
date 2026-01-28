@@ -60,8 +60,8 @@ type alias Model =
     , zone : Time.Zone
     , hoveredTimelineBox : Maybe (String, Int) -- (DeviceName, TimelineIdx)
     , hoveredHourCard : Maybe (String, Int) -- (DeviceName, hourIdx)
-    , apiBaseUrl : String
     , key : Nav.Key
+    , lastError : Maybe String
     }
 
 -- The Elm program expects a single string flag: the API URL to use for /status
@@ -71,16 +71,15 @@ type alias Model =
 init : () -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init _ url key =
     let
-        isReactor = (url.host == "localhost") && (url.port_ == Just 8000)
-        apiUrl = if isReactor then "http://localhost:8080/status" else "/status"
+        apiUrl = "/status"
     in
     ( { status = Nothing
       , now = Time.millisToPosix 0
       , zone = Time.utc
       , hoveredTimelineBox = Nothing
       , hoveredHourCard = Nothing
-      , apiBaseUrl = apiUrl
       , key = key
+      , lastError = Nothing
       }
     , Cmd.batch [ fetchStatus apiUrl, Time.now |> Task.perform NowIs, Time.here |> Task.perform GotZone ] )
 
@@ -108,9 +107,9 @@ update msg model =
         GotStatus result ->
             case result of
                 Ok status ->
-                    ( { model | status = Just status }, Cmd.none )
+                    ( { model | status = Just status, lastError = Nothing }, Cmd.none )
                 Err err ->
-                    ( { model | status = Nothing }, Cmd.none )
+                    ( { model | status = Nothing, lastError = Just (httpErrorToString err) }, Cmd.none )
 
         NowIs newNow ->
             ( { model | now = newNow }, Cmd.none )
@@ -143,7 +142,8 @@ deviceDecoder =
         (Decode.field "mac" Decode.string)
         (Decode.field "name" Decode.string)
         (Decode.field "daily_active_minutes" Decode.int)
-        (Decode.field "active" (Decode.list Decode.string))
+        -- backend sometimes returns `null` for `active`; accept null as empty list
+        (Decode.field "active" (Decode.oneOf [ Decode.list Decode.string, Decode.null [] ]))
         (Decode.field "quota" Decode.int)
 
 statusDecoder : Decoder Status
@@ -177,7 +177,11 @@ view model =
         stylesheet ::
         case model.status of
             Nothing ->
-                [ h2 [ Html.Attributes.class "title is-2" ] [ text "Loading…" ] ]
+                case model.lastError of
+                    Just err ->
+                        [ h2 [ Html.Attributes.class "title is-2" ] [ text ("Error loading status: " ++ err) ] ]
+                    Nothing ->
+                        [ h2 [ Html.Attributes.class "title is-2" ] [ text "Loading…" ] ]
             Just status ->
                 [ devicesListView status.devices (currentInterval model.zone model.now) model.hoveredTimelineBox model.hoveredHourCard identity
                 ]
@@ -421,7 +425,7 @@ parseSlot slotString =
             Just (idx, count)
         _ -> Nothing
 
--- Program expects an optional string flag (apiUrl). If missing, Elm will use a sensible default.
+-- The program always uses the relative "/status" endpoint. No flags/host detection required.
 main : Program () Model Msg
 main =
     Browser.application
