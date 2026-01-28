@@ -1,6 +1,8 @@
 module Main exposing (main)
 
 import Browser
+import Browser.Navigation as Nav
+import Url exposing (Url)
 import Html exposing (Html, div, h2, ul, li, text, span, div, Html, Attribute)
 import Html.Attributes exposing (style, class)
 import Html.Events exposing (onMouseEnter, onMouseLeave)
@@ -58,28 +60,40 @@ type alias Model =
     , zone : Time.Zone
     , hoveredTimelineBox : Maybe (String, Int) -- (DeviceName, TimelineIdx)
     , hoveredHourCard : Maybe (String, Int) -- (DeviceName, hourIdx)
+    , apiBaseUrl : String
+    , key : Nav.Key
     }
 
+-- The Elm program expects a single string flag: the API URL to use for /status
+-- This is computed in the embedding HTML so Elm doesn't need to parse hostname/port.
 
--- INIT & HTTP
+-- Initialize from the actual browser URL via Browser.application
+init : () -> Url -> Nav.Key -> ( Model, Cmd Msg )
+init _ url key =
+    let
+        isReactor = (url.host == "localhost") && (url.port_ == Just 8000)
+        apiUrl = if isReactor then "http://localhost:8080/status" else "/status"
+    in
+    ( { status = Nothing
+      , now = Time.millisToPosix 0
+      , zone = Time.utc
+      , hoveredTimelineBox = Nothing
+      , hoveredHourCard = Nothing
+      , apiBaseUrl = apiUrl
+      , key = key
+      }
+    , Cmd.batch [ fetchStatus apiUrl, Time.now |> Task.perform NowIs, Time.here |> Task.perform GotZone ] )
 
-url : String
-url =
-    "/status"
-
-init : () -> ( Model, Cmd Msg )
-init _ =
-    ( { status = Nothing, now = Time.millisToPosix 0, zone = Time.utc, hoveredTimelineBox = Nothing, hoveredHourCard = Nothing }, Cmd.batch [ fetchStatus, Time.now |> Task.perform NowIs, Time.here |> Task.perform GotZone ] )
-
-fetchStatus : Cmd Msg
-fetchStatus =
+fetchStatus : String -> Cmd Msg
+fetchStatus apiUrl =
     Http.get
-        { url = url
+        { url = apiUrl
         , expect = Http.expectJson GotStatus statusDecoder
         }
 
 type Msg
     = GotStatus (Result Http.Error Status)
+    | NoOp
     | NowIs Time.Posix
     | GotZone Time.Zone
     | TimelineBoxHovered String Int Bool -- deviceName, interval index, hover state
@@ -88,6 +102,9 @@ type Msg
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        NoOp ->
+            ( model, Cmd.none )
+
         GotStatus result ->
             case result of
                 Ok status ->
@@ -165,6 +182,13 @@ view model =
                 [ devicesListView status.devices (currentInterval model.zone model.now) model.hoveredTimelineBox model.hoveredHourCard identity
                 ]
     )
+
+
+viewDocument : Model -> Browser.Document Msg
+viewDocument model =
+    { title = "Home Gate"
+    , body = [ view model ]
+    }
 
 
 devicesListView devices currSeg hoveredTimelineBox hoveredHourCard liftMsg =
@@ -397,11 +421,14 @@ parseSlot slotString =
             Just (idx, count)
         _ -> Nothing
 
+-- Program expects an optional string flag (apiUrl). If missing, Elm will use a sensible default.
 main : Program () Model Msg
 main =
-    Browser.element
+    Browser.application
         { init = init
         , update = update
-        , view = view
-        , subscriptions = \_ -> Sub.none
+        , view = viewDocument
+        , subscriptions = subscriptions
+        , onUrlChange = \_ -> NoOp
+        , onUrlRequest = \_ -> NoOp
         }
